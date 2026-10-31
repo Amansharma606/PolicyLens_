@@ -1,0 +1,136 @@
+{
+  "baseline": {
+    "pipeline": "Baseline_Conventional_RAG",
+    "aggregate_metrics": {
+      "avg_latency_sec": 2.352,
+      "fact_completeness": 0.57,
+      "evidence_accuracy": 1.0,
+      "retrieval_recall_at_k": 0.8,
+      "faithfulness": 0.84
+    },
+    "detailed_results": [
+      {
+        "test_id": "q1_maternity_coverage",
+        "question": "Is maternity covered?",
+        "latency_sec": 11.546,
+        "completeness": 1.0,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 0.0,
+        "faithfulness": 1.0,
+        "sources_count": 4,
+        "status": "answered"
+      },
+      {
+        "test_id": "q2_maternity_waiting_period",
+        "question": "What is the waiting period for maternity?",
+        "latency_sec": 0.054,
+        "completeness": 1.0,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 1.0,
+        "sources_count": 5,
+        "status": "answered"
+      },
+      {
+        "test_id": "q3_maternity_exclusions",
+        "question": "List all exclusions related to maternity.",
+        "latency_sec": 0.051,
+        "completeness": 0.5,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 1.0,
+        "sources_count": 5,
+        "status": "answered"
+      },
+      {
+        "test_id": "q4_claim_documents",
+        "question": "What documents are required to file a reimbursement claim?",
+        "latency_sec": 0.052,
+        "completeness": 0.33,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 1.0,
+        "sources_count": 4,
+        "status": "answered"
+      },
+      {
+        "test_id": "q5_unmentioned_condition",
+        "question": "Does this policy cover space tourism medical evacuation?",
+        "latency_sec": 0.058,
+        "completeness": 0.0,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 0.2,
+        "sources_count": 4,
+        "status": "answered"
+      }
+    ]
+  },
+  "proposed": {
+    "pipeline": "PolicyLens_Hybrid_RAG",
+    "aggregate_metrics": {
+      "avg_latency_sec": 0.179,
+      "fact_completeness": 0.47,
+      "evidence_accuracy": 1.0,
+      "retrieval_recall_at_k": 1.0,
+      "faithfulness": 0.84
+    },
+    "detailed_results": [
+      {
+        "test_id": "q1_maternity_coverage",
+        "question": "Is maternity covered?",
+        "latency_sec": 0.362,
+        "completeness": 0.5,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 1.0,
+        "sources_count": 5,
+        "status": "answered"
+      },
+      {
+        "test_id": "q2_maternity_waiting_period",
+        "question": "What is the waiting period for maternity?",
+        "latency_sec": 0.127,
+        "completeness": 1.0,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 1.0,
+        "sources_count": 6,
+        "status": "answered"
+      },
+      {
+        "test_id": "q3_maternity_exclusions",
+        "question": "List all exclusions related to maternity.",
+        "latency_sec": 0.122,
+        "completeness": 0.5,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 1.0,
+        "sources_count": 5,
+        "status": "answered"
+      },
+      {
+        "test_id": "q4_claim_documents",
+        "question": "What documents are required to file a reimbursement claim?",
+        "latency_sec": 0.133,
+        "completeness": 0.33,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 1.0,
+        "sources_count": 5,
+        "status": "answered"
+      },
+      {
+        "test_id": "q5_unmentioned_condition",
+        "question": "Does this policy cover space tourism medical evacuation?",
+        "latency_sec": 0.15,
+        "completeness": 0.0,
+        "evidence_accuracy": 1.0,
+        "recall_at_k": 1.0,
+        "faithfulness": 0.2,
+        "sources_count": 5,
+        "status": "answered"
+      }
+    ]
+  }
+}

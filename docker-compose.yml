@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./BACKEND
+      dockerfile: Dockerfile
+    container_name: policylens-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - API_PORT=8000
+      - DATABASE_URL=sqlite:///./policylens.db
+      - JWT_SECRET=policylens_super_secure_jwt_secret_key_2026
+      - LLM_PROVIDER=gemini
+      - GEMINI_API_KEY=
+      - EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
+    volumes:
+      - ./BACKEND/data:/app/data
+      - ./BACKEND/policylens.db:/app/policylens.db
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: policylens-frontend
+    restart: always
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend

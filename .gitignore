@@ -1,0 +1,97 @@
+# ==============================================================================
+# PolicyLens Root .gitignore
+# ==============================================================================
+
+# Environment and Secrets (CRITICAL SECURITY)
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.cert
+*.pfx
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Virtual Environments
+venv/
+.venv/
+ENV/
+env/
+
+# Databases & Runtime State (DO NOT COMMIT USER DATA)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+policylens.db
+policylens.db-journal
+
+# User Uploaded Documents & Processed Storage (CRITICAL PRIVACY)
+BACKEND/data/uploads/*
+!BACKEND/data/uploads/.gitkeep
+BACKEND/data/processed/*
+!BACKEND/data/processed/.gitkeep
+
+# Node & Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+*.local
+
+# Playwright & Screenshots
+.playwright-mcp/
+screenshot*.png
+screenshot*.jpg
+screenshot*.jpeg
+*.png.tmp
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
