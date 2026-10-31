@@ -21,7 +21,7 @@ from app.core.security import get_current_user_optional
 from app.services.pdf_processor import PDFProcessor, PDFProcessingError
 from app.services.classifier import ClauseClassifier
 from app.services.embeddings import EmbeddingService
-from app.services.bm25_retriever import get_bm25_index, invalidate_bm25_index
+from app.services.bm25_retriever import get_bm25_index, invalidate_bm25_index, invalidate_bm25_index
 from app.services.explanation_service import PolicyExplanationService
 from app.core.logging import logger
 
@@ -180,7 +180,8 @@ def upload_document(
                 clean_text=" ".join(text.split())
             )
             clause_objs.append(db_clause)
-            clauses_to_encode.append(text)
+            enriched_text = f"[Section: {sec_name}] [Clause: {raw_c.get('clause_number') or ''}] [Category: {cat}] {text}"
+            clauses_to_encode.append(enriched_text)
 
         dense_vectors = EmbeddingService.encode_batch(clauses_to_encode)
         for idx, obj in enumerate(clause_objs):
@@ -189,11 +190,13 @@ def upload_document(
             db.add(obj)
         db.commit()
 
-        # Initialize BM25 index in memory
+        # Initialize BM25 index in memory with enriched search tokens
+        invalidate_bm25_index(doc.id)
         db_clauses = db.query(DocumentClause).filter(DocumentClause.document_id == doc.id).all()
         cached_clauses = [{
             "id": c.id,
             "clean_text": c.clean_text,
+            "search_text": f"[Section: {c.section_name or ''}] [Clause: {c.clause_number or ''}] [Category: {c.category or ''}] {c.clean_text}",
             "category": c.category,
             "page": c.page_number
         } for c in db_clauses]

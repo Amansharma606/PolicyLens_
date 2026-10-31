@@ -1,5 +1,8 @@
-import json
 import os
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+import json
 from typing import List, Dict, Any, Optional
 import numpy as np
 from app.core.config import settings
@@ -7,7 +10,8 @@ from app.core.logging import logger
 
 class EmbeddingService:
     """
-    Embedding Service supporting BGE-M3, MiniLM (cached locally), and internal dense vectorizer.
+    Local Offline Embedding Service supporting cached BGE-M3, MiniLM, and internal dense semantic vectorizer.
+    Guarantees no network hangs by enforcing offline execution.
     """
 
     _model = None
@@ -17,31 +21,31 @@ class EmbeddingService:
     @classmethod
     def get_model(cls):
         if cls._model is None:
-            # 1. Try local cached model (e.g. all-MiniLM-L6-v2)
-            try:
-                from sentence_transformers import SentenceTransformer
-                # Try loading with local_files_only first to prevent unwanted network retries
-                try:
-                    cls._model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", local_files_only=True)
-                    cls._model_name = "sentence-transformers/all-MiniLM-L6-v2"
-                    cls._vector_dim = cls._model.get_sentence_embedding_dimension()
-                    logger.info(f"Loaded locally cached embedding model {cls._model_name} (dim={cls._vector_dim}).")
-                    return cls._model
-                except Exception:
-                    pass
+            from sentence_transformers import SentenceTransformer
 
-                # If primary model is explicitly configured and not local-only:
-                target = settings.EMBEDDING_MODEL_NAME
-                cls._model = SentenceTransformer(target)
-                cls._model_name = target
-                cls._vector_dim = cls._model.get_sentence_embedding_dimension()
-                logger.info(f"Loaded embedding model {target} (dim={cls._vector_dim}).")
-                return cls._model
-            except Exception as e:
-                logger.warning(f"Could not load neural model: {e}. Using internal dense semantic vectorizer.")
-                cls._model = None
-                cls._model_name = "internal_dense_semantic_vectorizer"
-                cls._vector_dim = 256
+            # 1. Try BAAI/bge-m3 if requested or available locally
+            preferred_models = [
+                "BAAI/bge-m3",
+                "sentence-transformers/all-MiniLM-L6-v2"
+            ]
+            if settings.EMBEDDING_MODEL_NAME not in preferred_models:
+                preferred_models.insert(0, settings.EMBEDDING_MODEL_NAME)
+
+            for target in preferred_models:
+                try:
+                    cls._model = SentenceTransformer(target, local_files_only=True)
+                    cls._model_name = target
+                    cls._vector_dim = cls._model.get_sentence_embedding_dimension()
+                    logger.info(f"Loaded locally cached embedding model {target} (dim={cls._vector_dim}).")
+                    return cls._model
+                except Exception as e:
+                    logger.debug(f"Could not load {target} with local_files_only: {e}")
+
+            logger.warning("Could not load neural embedding models from local cache. Using internal dense semantic vectorizer.")
+            cls._model = None
+            cls._model_name = "internal_dense_semantic_vectorizer"
+            cls._vector_dim = 256
+
         return cls._model
 
     @classmethod

@@ -10,9 +10,9 @@ from app.core.logging import logger
 
 class HybridRetriever:
     """
-    Document-Isolated Hybrid Retrieval Engine.
-    Combines Dense Semantic Vectors (BGE-M3), BM25 Sparse Keywords,
-    and Question Intent Category Signals.
+    Document-Isolated Dynamic Hybrid Retrieval Engine.
+    Combines Dense Semantic Vectors (BGE-M3 / MiniLM), BM25 Sparse Keywords,
+    and Question Intent Category Signals with dynamic weight adaptation.
     """
 
     @classmethod
@@ -22,7 +22,7 @@ class HybridRetriever:
         document_id: str,
         query: str,
         analysis: Dict[str, Any],
-        top_k: int = 12
+        top_k: int = 15
     ) -> List[Dict[str, Any]]:
         """
         Retrieves candidate clauses strictly isolated to document_id.
@@ -41,26 +41,36 @@ class HybridRetriever:
                 except Exception:
                     pass
 
+            sec_name = c.section_name or "General Terms"
+            clause_num = c.clause_number or ""
+            cat = c.category or "General"
+            clean_t = c.clean_text or c.original_text
+            search_t = f"[Section: {sec_name}] [Clause: {clause_num}] [Category: {cat}] {clean_t}"
+
             clauses_data.append({
                 "id": c.id,
                 "document_id": c.document_id,
                 "page": c.page_number,
-                "section": c.section_name or "General Terms",
+                "section": sec_name,
                 "clause_number": c.clause_number,
-                "category": c.category or "General",
+                "category": cat,
                 "confidence": c.classification_confidence or 0.8,
                 "text": c.original_text,
-                "clean_text": c.clean_text or c.original_text,
+                "clean_text": clean_t,
+                "search_text": search_t,
                 "embedding": embedding
             })
 
-        # 2. Dense Semantic Search
-        query_embedding = EmbeddingService.encode_text(query)
+        expanded_query = analysis.get("expanded_query", query)
+        intent = analysis.get("intent", "general_qa")
+        is_comprehensive = analysis.get("is_comprehensive", False)
+
+        # 2. Dense Semantic Search using query and expanded query
+        query_embedding = EmbeddingService.encode_text(expanded_query)
         dense_scores: Dict[int, float] = {}
         for c in clauses_data:
             if c["embedding"]:
                 sim = EmbeddingService.cosine_similarity(query_embedding, c["embedding"])
-                # Normalize cosine similarity [-1, 1] -> [0, 1]
                 norm_sim = max(0.0, (sim + 1.0) / 2.0)
                 dense_scores[c["id"]] = norm_sim
             else:
@@ -68,17 +78,32 @@ class HybridRetriever:
 
         # 3. BM25 Sparse Search
         bm25_idx = get_bm25_index(document_id, clauses_data)
-        bm25_results = bm25_idx.search(query, top_k=len(clauses_data))
+        bm25_results = bm25_idx.search(expanded_query, top_k=len(clauses_data))
         bm25_scores: Dict[int, float] = {r["clause_id"]: r["bm25_score"] for r in bm25_results}
 
         # 4. Question Category Boosts
         category_boosts = analysis.get("category_boosts", {})
 
-        # 5. Hybrid Scoring Equation:
-        # FinalScore = α × DenseScore + β × BM25Score + γ × CategoryScore
-        alpha = settings.HYBRID_ALPHA
-        beta = settings.HYBRID_BETA
-        gamma = settings.HYBRID_GAMMA
+        # 5. Dynamic Weight Tuning
+        if intent in ["limit_inquiry", "claim_inquiry"]:
+            # High precision for numbers, rupee amounts, forms, specific names
+            alpha = 0.40  # Dense
+            beta = 0.45   # BM25
+            gamma = 0.15  # Category
+        elif intent in ["waiting_period_inquiry", "exclusion_inquiry"]:
+            # High category priority
+            alpha = 0.35
+            beta = 0.30
+            gamma = 0.35
+        elif intent in ["overview_coverage"]:
+            # High dense conceptual coverage
+            alpha = 0.55
+            beta = 0.30
+            gamma = 0.15
+        else:
+            alpha = settings.HYBRID_ALPHA
+            beta = settings.HYBRID_BETA
+            gamma = settings.HYBRID_GAMMA
 
         scored_candidates = []
         for c in clauses_data:
@@ -98,4 +123,5 @@ class HybridRetriever:
             })
 
         scored_candidates.sort(key=lambda x: x["hybrid_score"], reverse=True)
-        return scored_candidates[:top_k]
+        retrieval_limit = 25 if is_comprehensive else top_k
+        return scored_candidates[:retrieval_limit]

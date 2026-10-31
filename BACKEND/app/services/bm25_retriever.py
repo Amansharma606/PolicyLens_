@@ -7,13 +7,16 @@ from app.core.logging import logger
 class BM25Retriever:
     """
     In-memory BM25 Okapi Sparse Keyword Retrieval Index.
-    Maintains document-specific tokenized inverted indexes to guarantee isolation.
+    Maintains document-specific tokenized inverted indexes to guarantee strict document isolation.
     """
 
     def __init__(self, document_id: str, clauses: List[Dict[str, Any]]):
         self.document_id = document_id
         self.clauses = clauses
-        self.tokenized_corpus = [self._tokenize(c["clean_text"]) for c in clauses]
+        self.tokenized_corpus = [
+            self._tokenize(c.get("search_text") or c.get("clean_text") or c.get("text", ""))
+            for c in clauses
+        ]
         if self.tokenized_corpus and any(len(doc) > 0 for doc in self.tokenized_corpus):
             self.bm25 = BM25Okapi(self.tokenized_corpus)
         else:

@@ -5,9 +5,10 @@ from app.core.logging import logger
 
 class CompletenessChecker:
     """
-    Validates whether the retrieved evidence covers all required policy categories
+    Validates whether the retrieved evidence covers all required policy dimensions
     (Coverage, Waiting Period, Exclusion, Condition, Claim Requirement).
-    Executes secondary category-targeted retrieval when critical evidence is missing.
+    Executes secondary category-targeted retrieval when critical evidence is missing,
+    and enforces strict insufficiency checking for unmentioned conditions or diseases.
     """
 
     @classmethod
@@ -21,6 +22,28 @@ class CompletenessChecker:
         """
         Returns: (expanded_clauses, completeness_score, missing_categories, is_insufficient)
         """
+        # 1. First check if user queried a specific entity/disease not mentioned in the policy
+        specific_entity = analysis.get("specific_entity", "")
+        is_unrecognized = analysis.get("is_unrecognized_specific", False)
+
+        if is_unrecognized or specific_entity:
+            entity_words = [w.lower() for w in specific_entity.split() if len(w) > 2]
+            if entity_words:
+                # Query whether ANY clause in this document contains these entity words
+                has_entity_in_doc = False
+                for ew in entity_words:
+                    cnt = db.query(DocumentClause).filter(
+                        DocumentClause.document_id == document_id,
+                        DocumentClause.clean_text.ilike(f"%{ew}%")
+                    ).count()
+                    if cnt > 0:
+                        has_entity_in_doc = True
+                        break
+
+                if not has_entity_in_doc:
+                    logger.info(f"Specific queried entity '{specific_entity}' is not found anywhere in document {document_id}. Flagging as insufficient evidence.")
+                    return [], 0.0, [], True
+
         required_categories = analysis.get("required_categories", [])
         if not required_categories:
             return retrieved_clauses, 1.0, [], len(retrieved_clauses) == 0
@@ -36,22 +59,24 @@ class CompletenessChecker:
         if missing_categories:
             topic = analysis.get("topic", "")
             for missing_cat in missing_categories:
-                # Target clauses in this category for this specific document
                 query = db.query(DocumentClause).filter(
                     DocumentClause.document_id == document_id,
                     DocumentClause.category == missing_cat
                 )
-                
-                # If topic exists, search for topic keywords in that category
+
                 if topic and topic != "general_health_policy":
                     keywords = [topic.replace("_", " ")]
                     if topic == "maternity":
-                        keywords.extend(["pregnancy", "childbirth", "delivery", "newborn"])
+                        keywords.extend(["pregnancy", "childbirth", "delivery", "newborn", "cesarean"])
                     elif topic == "pre_existing_disease":
-                        keywords.extend(["pre-existing", "ped", "chronic"])
+                        keywords.extend(["pre-existing", "ped", "chronic", "diabetes", "hypertension"])
                     elif topic == "cataract":
-                        keywords.extend(["eye", "lens"])
-                    
+                        keywords.extend(["eye", "lens", "cataract"])
+                    elif topic == "room_rent":
+                        keywords.extend(["room rent", "icu", "capping", "deduction"])
+                    elif topic == "claim_procedure":
+                        keywords.extend(["cashless", "reimbursement", "intimation", "tpa", "bill"])
+
                     found_target = []
                     for kw in keywords:
                         hits = query.filter(DocumentClause.clean_text.ilike(f"%{kw}%")).limit(2).all()
@@ -85,14 +110,19 @@ class CompletenessChecker:
         covered_req = total_req - len(final_missing)
         completeness_score = round(covered_req / total_req, 2) if total_req > 0 else 1.0
 
-        # Check if insufficient evidence:
-        # If top scores are very low or 0 clauses retrieved, flag as insufficient
         is_insufficient = False
         if not expanded_clauses:
             is_insufficient = True
         else:
-            top_score = max((c.get("hybrid_score", 0.0) for c in expanded_clauses), default=0.0)
-            if top_score < 0.12 and not any(analysis.get("topic", "") in c["text"].lower() for c in expanded_clauses):
-                is_insufficient = True
+            top_score = max((c.get("rerank_score", c.get("hybrid_score", 0.0)) for c in expanded_clauses), default=0.0)
+            topic_raw = analysis.get("topic", "")
+            if top_score < 0.15 and topic_raw != "general_health_policy":
+                topic_words = set(topic_raw.lower().split("_"))
+                has_topic_match = any(
+                    any(w in c["text"].lower() for w in topic_words)
+                    for c in expanded_clauses
+                )
+                if not has_topic_match:
+                    is_insufficient = True
 
         return expanded_clauses, completeness_score, final_missing, is_insufficient

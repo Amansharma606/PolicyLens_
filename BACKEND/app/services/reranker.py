@@ -1,3 +1,7 @@
+import os
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 import re
 from typing import List, Dict, Any, Tuple
 from app.core.config import settings
@@ -6,7 +10,7 @@ from app.core.logging import logger
 class CrossEncoderReranker:
     """
     Reranks retrieved candidate clauses using Cross-Encoder model
-    or transparent lexical-semantic term interaction fallback.
+    or transparent lexical-semantic interaction fallback.
     """
 
     _model = None
@@ -17,20 +21,11 @@ class CrossEncoderReranker:
         if not cls._is_loaded:
             try:
                 from sentence_transformers import CrossEncoder
-                # Try loading cached model with local_files_only
-                try:
-                    cls._model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2", max_length=512, local_files_only=True)
-                    logger.info("Loaded locally cached CrossEncoder reranker successfully.")
-                    cls._is_loaded = True
-                    return cls._model
-                except Exception:
-                    pass
-
                 target = settings.RERANKER_MODEL_NAME
-                cls._model = CrossEncoder(target, max_length=512)
-                logger.info("CrossEncoder reranker loaded successfully.")
+                cls._model = CrossEncoder(target, max_length=512, local_files_only=True)
+                logger.info("Loaded locally cached CrossEncoder reranker successfully.")
             except Exception as e:
-                logger.warning(f"CrossEncoder reranker not loaded ({e}). Using transparent interaction reranking fallback.")
+                logger.warning(f"CrossEncoder reranker not loaded offline ({e}). Using transparent interaction reranking fallback.")
                 cls._model = None
             cls._is_loaded = True
         return cls._model
@@ -43,7 +38,13 @@ class CrossEncoderReranker:
         model = cls.get_model()
         if model is not None:
             try:
-                pairs = [[query, c["text"]] for c in candidate_clauses]
+                # Pair query with section-enriched text for stronger Cross-Encoder alignment
+                pairs = []
+                for c in candidate_clauses:
+                    sec = c.get("section") or "General Terms"
+                    text = c.get("text", "")
+                    pairs.append([query, f"[Section: {sec}] {text}"])
+
                 scores = model.predict(pairs)
                 for idx, sc in enumerate(scores):
                     candidate_clauses[idx]["rerank_score"] = float(sc)
@@ -52,7 +53,7 @@ class CrossEncoderReranker:
             except Exception as e:
                 logger.error(f"Error in CrossEncoder reranking: {e}")
 
-        # Fallback interaction reranking
+        # Transparent interaction reranking fallback
         query_terms = set(re.findall(r"\w{3,}", query.lower()))
         for c in candidate_clauses:
             text = c["text"].lower()
