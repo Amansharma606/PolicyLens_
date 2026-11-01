@@ -66,19 +66,39 @@ class AnswerValidator:
         topic_name = analysis.get("topic", "the queried topic").replace("_", " ").title()
         lang = analysis.get("language", "english")
 
-        if lang in ["hindi", "hinglish"]:
+        if lang == "hindi":
             return (
-                f"**Direct Answer:**\n"
+                f"### Direct Answer\n"
+                f"अपलोड किए गए पॉलिसी दस्तावेज़ में **{topic_name}** के संबंध में पर्याप्त जानकारी नहीं मिली।\n\n"
+                f"### Simple Explanation\n"
+                f"इस पॉलिसी के अनुक्रमित अनुभागों में इस विशिष्ट बीमारी, इलाज या नियम का स्पष्ट उल्लेख नहीं है।\n\n"
+                f"### Important Conditions\n"
+                f"- पॉलिसी के मुख्य नियमों में इस विषय पर कोई स्पष्ट कवरेज या प्रतीक्षा अवधि दर्ज नहीं है।\n"
+                f"- कृपया अपने पॉलिसी शेड्यूल या अतिरिक्त राइडर की जांच करें कि क्या यह अलग से शामिल है।\n\n"
+                f"### Evidence from Your Policy\n"
+                f"इस विषय से संबंधित कोई प्रमाणित खंड (clause) अपलोड किए गए दस्तावेज़ में नहीं पाया गया।"
+            )
+        elif lang == "hinglish":
+            return (
+                f"### Direct Answer\n"
                 f"Main aapke uploaded policy document mein **{topic_name}** ke baare mein paryapt jaankari nahi dhoondh saka.\n\n"
-                f"**Important Conditions & Limits:**\n"
-                f"- Upload kiye gaye document ke kisi bhi section mein is vishay ka spasht ullekh nahi mila.\n"
-                f"- Kripya apni policy schedule ya additional riders ki jaanch karein ki kya yah alag se cover kiya gaya hai."
+                f"### Simple Explanation\n"
+                f"Is policy ke indexed sections mein is vishay ka spasht ullekh nahi mila, isliye bina pramaan ke iski pushti nahi ki ja sakti.\n\n"
+                f"### Important Conditions\n"
+                f"- Upload kiye gaye document mein is vishay par koi nirdharit coverage ya waiting period darj nahi hai.\n"
+                f"- Kripya apni policy schedule ya additional riders ki jaanch karein ki kya yah alag se cover kiya gaya hai.\n\n"
+                f"### Evidence from Your Policy\n"
+                f"Is vishay se sambandhit koi clause ya pramaan active policy document mein nahi mila."
             )
 
         return (
-            f"**Direct Answer:**\n"
+            f"### Direct Answer\n"
             f"I could not find sufficient information about **{topic_name}** in the uploaded policy document.\n\n"
-            f"**Important Conditions & Limits:**\n"
-            f"- The indexed sections of this policy do not explicitly state coverage, waiting periods, or limits for this queried item.\n"
-            f"- Please refer to your specific Policy Schedule or optional rider endorsements to verify if additional coverage was opted for."
+            f"### Simple Explanation\n"
+            f"The uploaded policy text does not explicitly outline provisions, waiting periods, or benefit calculations for this specific inquiry.\n\n"
+            f"### Important Conditions\n"
+            f"- The indexed sections do not provide sufficient evidentiary ground to confirm or deny coverage for this term.\n"
+            f"- Please refer to your specific Policy Schedule or optional rider endorsements to verify whether additional coverage applies.\n\n"
+            f"### Evidence from Your Policy\n"
+            f"No supporting clauses or specific terms matching this inquiry were identified in the active document."
         )

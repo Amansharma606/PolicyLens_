@@ -17,9 +17,10 @@ import {
   HelpCircle,
   FileSearch,
   Scale,
-  CalendarClock
+  CalendarClock,
+  RefreshCw
 } from 'lucide-react';
-import { getDocuments, askQuestion, getDocumentHistory } from '../services/api';
+import { getDocuments, askQuestion, getDocumentHistory, getDocumentStatus } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
 const STARTER_PROMPTS = [
@@ -158,6 +159,43 @@ export const ChatPage = () => {
   }, [selectedDocId, conversationId]);
 
   const activeDoc = documents.find((d) => d.id === selectedDocId);
+  const isDocReady = !selectedDocId || (activeDoc && (activeDoc.status === 'completed' || activeDoc.status === 'ready'));
+  const isProcessing = activeDoc && (activeDoc.status === 'processing' || activeDoc.status === 'pending');
+  const isFailed = activeDoc && activeDoc.status === 'failed';
+
+  // Poll status if active document is still processing
+  useEffect(() => {
+    if (!selectedDocId || !isProcessing) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const statusResp = await getDocumentStatus(selectedDocId);
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === selectedDocId
+              ? {
+                  ...d,
+                  status: statusResp.status,
+                  processing_stage: statusResp.processing_stage,
+                  processing_progress: statusResp.processing_progress,
+                  total_pages: statusResp.total_pages || d.total_pages,
+                  total_clauses: statusResp.total_clauses || d.total_clauses,
+                }
+              : d
+          )
+        );
+        if (statusResp.status === 'completed' || statusResp.status === 'ready') {
+          toast.success("Document indexing complete! You can now ask questions.");
+        } else if (statusResp.status === 'failed') {
+          toast.error("Document indexing failed: " + (statusResp.error_message || 'Unknown error'));
+        }
+      } catch (err) {
+        console.error("Status polling error:", err);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [selectedDocId, isProcessing]);
 
   const handleDocumentChange = (newDocId) => {
     setSelectedDocId(newDocId);
@@ -328,7 +366,17 @@ export const ChatPage = () => {
             return <div key={idx} className="h-2" />;
           }
 
-          // Section header like **Coverage Determination:**
+          // Section header like ### Direct Answer or **Coverage Determination:**
+          if (trimmed.startsWith('### ')) {
+            const headerText = trimmed.slice(4).trim();
+            return (
+              <h4 key={idx} className="font-bold text-slate-900 text-base sm:text-lg pt-3 first:pt-0 pb-1 text-slate-950 border-b border-slate-100 flex items-center gap-2">
+                <span className="w-1.5 h-4 rounded-full bg-amber-500 shrink-0" />
+                <span>{headerText}</span>
+              </h4>
+            );
+          }
+
           if (trimmed.startsWith('**') && trimmed.endsWith('**') && !trimmed.slice(2, -2).includes('**')) {
             const headerText = trimmed.slice(2, -2);
             return (
@@ -375,9 +423,17 @@ export const ChatPage = () => {
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-amber-600 font-bold uppercase tracking-wider">Active Policy</span>
               {activeDoc && (
-                <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-mono font-medium border border-slate-200/60 shrink-0">
-                  {activeDoc.total_pages} {activeDoc.total_pages === 1 ? 'Page' : 'Pages'}
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="px-2 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-mono font-medium border border-slate-200/60 shrink-0">
+                    {activeDoc.total_pages} {activeDoc.total_pages === 1 ? 'Page' : 'Pages'}
+                  </span>
+                  {activeDoc.status === 'processing' && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
+                      <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                      Indexing ({activeDoc.processing_progress || 0}%)
+                    </span>
+                  )}
+                </div>
               )}
             </div>
             
@@ -627,20 +683,40 @@ export const ChatPage = () => {
       {/* 3. Modern ChatGPT-Style Floating Composer Fixed at Bottom */}
       <div className="chat-footer shrink-0 w-full bg-gradient-to-t from-white via-white/95 to-transparent pt-2 pb-4 sm:pb-5 px-4 sm:px-6 lg:px-8 z-10">
         <div className="max-w-4xl lg:max-w-5xl mx-auto w-full space-y-2">
-          {/* Quick suggestions pills when conversation is active */}
-          {messages.length > 0 && (
+          {/* Quick suggestions pills when conversation is active and document is ready */}
+          {messages.length > 0 && isDocReady && (
             <div className="flex items-center gap-1.5 overflow-x-auto py-1 chat-scroll text-xs">
               <span className="text-slate-400 font-medium text-[11px] shrink-0 mr-1">Suggestions:</span>
               {QUICK_SUGGESTIONS.map((sq, i) => (
                 <button
                   key={i}
                   onClick={() => handleSendQuestion(sq)}
-                  disabled={loading || !selectedDocId}
+                  disabled={loading || !selectedDocId || !isDocReady}
                   className="px-3 py-1 rounded-full bg-slate-100 hover:bg-slate-200/80 text-slate-700 text-xs font-medium shrink-0 transition-colors border border-slate-200/60 disabled:opacity-50 whitespace-nowrap shadow-2xs"
                 >
                   {sq}
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* Status banner when document is processing or failed */}
+          {isProcessing && (
+            <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-amber-50 border border-amber-200/80 text-amber-900 text-xs sm:text-sm">
+              <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="font-semibold text-amber-950">Policy is being indexed: </span>
+                <span className="text-amber-800">{activeDoc?.processing_stage || 'Extracting and embedding clauses...'}</span>
+                <span className="ml-1.5 text-amber-600 font-mono font-medium">({activeDoc?.processing_progress || 0}%)</span>
+                <span className="hidden sm:inline ml-2 text-xs text-amber-700/80">• Chat will unlock automatically when indexing finishes.</span>
+              </div>
+            </div>
+          )}
+
+          {isFailed && (
+            <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-rose-50 border border-rose-200/80 text-rose-800 text-xs sm:text-sm">
+              <span className="font-semibold">Processing Failed: </span>
+              <span>{activeDoc?.processing_stage || 'An error occurred while indexing this document.'}</span>
             </div>
           )}
 
@@ -657,17 +733,21 @@ export const ChatPage = () => {
               }}
               onKeyDown={handleKeyDown}
               placeholder={
-                selectedDocId
-                  ? "Ask anything about this policy (Press Enter to send, Shift+Enter for newline)..."
-                  : "Please select or upload a policy document first"
+                !selectedDocId
+                  ? "Please select or upload a policy document first"
+                  : isProcessing
+                  ? `Indexing policy (${activeDoc?.processing_progress || 0}%)... Chat will unlock shortly`
+                  : isFailed
+                  ? "Document processing failed. Please re-upload or select another policy."
+                  : "Ask anything about this policy (Press Enter to send, Shift+Enter for newline)..."
               }
-              disabled={!selectedDocId || loading}
+              disabled={!selectedDocId || !isDocReady || loading}
               className="w-full px-3.5 py-1.5 bg-transparent text-sm sm:text-[15px] text-slate-800 placeholder:text-slate-400 focus:outline-none resize-none min-h-[38px] max-h-[160px] leading-relaxed chat-scroll disabled:opacity-50"
             />
 
             <button
               onClick={() => handleSendQuestion()}
-              disabled={!inputQuestion.trim() || !selectedDocId || loading}
+              disabled={!inputQuestion.trim() || !selectedDocId || !isDocReady || loading}
               className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-900 hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-slate-900 text-white flex items-center justify-center transition-all shadow-md shrink-0 mb-0.5 active:scale-95 cursor-pointer disabled:cursor-not-allowed"
               title="Send Question (Enter)"
               aria-label="Send Question"

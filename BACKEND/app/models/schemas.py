@@ -28,8 +28,23 @@ class DocumentResponse(BaseModel):
     total_words: int
     upload_date: str
     status: str
+    processing_stage: Optional[str] = "completed"
+    processing_progress: Optional[int] = 100
     error_message: Optional[str] = None
     has_explanation: bool = False
+
+class DocumentStatusResponse(BaseModel):
+    id: str
+    filename: str
+    status: str  # "processing", "completed", "ready", "failed", "scanned_ocr_required"
+    processing_stage: str
+    processing_progress: int  # 0 to 100
+    total_pages: int = 0
+    total_words: int = 0
+    total_clauses: int = 0
+    error_message: Optional[str] = None
+    has_explanation: bool = False
+    is_ready_for_chat: bool = False
 
 class DocumentUploadResponse(BaseModel):
     message: str

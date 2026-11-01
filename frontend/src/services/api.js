@@ -28,6 +28,11 @@ export const getDocument = async (documentId) => {
   return response.data;
 };
 
+export const getDocumentStatus = async (documentId) => {
+  const response = await api.get(`/api/documents/${documentId}/status`);
+  return response.data;
+};
+
 export const getDocumentText = async (documentId) => {
   const response = await api.get(`/api/documents/${documentId}/text`);
   return response.data;
@@ -46,6 +51,7 @@ export const uploadDocument = async (file, onUploadProgress) => {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    timeout: 180000, // 3 minutes for comprehensive insurance policy extraction & embedding
     onUploadProgress: (progressEvent) => {
       if (onUploadProgress && progressEvent.total) {
         const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);

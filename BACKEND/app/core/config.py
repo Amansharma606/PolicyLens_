@@ -21,17 +21,21 @@ class Settings(BaseModel):
     DEBUG: bool = os.getenv("DEBUG", "True").lower() in ("true", "1", "t")
     PORT: int = int(os.getenv("API_PORT", "8000"))
 
-    # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'policylens.db'}")
+    # Database (Canonical absolute path so CWD never changes target database)
+    DATABASE_URL: str = (
+        f"sqlite:///{BASE_DIR.as_posix()}/policylens.db"
+        if os.getenv("DATABASE_URL", "").startswith("sqlite:///.") or not os.getenv("DATABASE_URL")
+        else os.getenv("DATABASE_URL")
+    )
 
     # Security & Auth
     JWT_SECRET: str = os.getenv("JWT_SECRET", "policylens_super_secure_jwt_secret_key_2026_health_rag")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
 
-    # Paths
-    UPLOAD_DIR: Path = BASE_DIR / "data" / "uploads"
-    PROCESSED_DIR: Path = BASE_DIR / "data" / "processed"
+    # Paths (Canonical absolute paths)
+    UPLOAD_DIR: Path = (BASE_DIR / "data" / "uploads").resolve()
+    PROCESSED_DIR: Path = (BASE_DIR / "data" / "processed").resolve()
     MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "30"))
     ALLOWED_EXTENSIONS: List[str] = [".pdf"]
 

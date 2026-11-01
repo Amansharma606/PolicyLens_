@@ -51,10 +51,14 @@ env/
 # Databases & Runtime State (DO NOT COMMIT USER DATA)
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 policylens.db
 policylens.db-journal
+policylens.db-shm
+policylens.db-wal
 
 # User Uploaded Documents & Processed Storage (CRITICAL PRIVACY)
 BACKEND/data/uploads/*

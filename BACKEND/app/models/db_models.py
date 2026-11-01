@@ -43,7 +43,10 @@ class Document(Base):
     file_size = Column(Integer, default=0)
     total_pages = Column(Integer, default=0)
     total_words = Column(Integer, default=0)
-    status = Column(String(50), default="ready")  # uploading, extracting, chunking, ready, scanned_ocr_required, error
+    status = Column(String(50), default="processing")  # processing, completed, ready, scanned_ocr_required, failed
+    processing_stage = Column(String(150), default="Queued for processing")
+    processing_progress = Column(Integer, default=0)
+    file_hash = Column(String(64), nullable=True, index=True)
     error_message = Column(Text, nullable=True)
     explanation_json = Column(Text, nullable=True)
     upload_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))

@@ -1,5 +1,5 @@
 from typing import Generator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
 from app.core.logging import logger
@@ -17,6 +17,16 @@ engine = create_engine(
     echo=False
 )
 
+# Enable WAL mode and busy timeout for concurrent read/write throughput on SQLite
+if settings.DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=15000")
+        cursor.close()
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db() -> Generator[Session, None, None]:
@@ -29,6 +39,21 @@ def get_db() -> Generator[Session, None, None]:
 def init_db():
     logger.info("Initializing database schema...")
     Base.metadata.create_all(bind=engine)
+
+    # Safe migration for new columns on SQLite
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            cols = [row[1] for row in conn.execute(text("PRAGMA table_info(documents)")).fetchall()]
+            if "processing_stage" not in cols:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN processing_stage VARCHAR(150) DEFAULT 'completed'"))
+            if "processing_progress" not in cols:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN processing_progress INTEGER DEFAULT 100"))
+            if "file_hash" not in cols:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN file_hash VARCHAR(64) DEFAULT NULL"))
+            conn.commit()
+        except Exception as e:
+            logger.debug(f"Schema check error: {e}")
     
     # Seed default demonstration users if empty
     db = SessionLocal()
@@ -70,3 +95,9 @@ def init_db():
         db.rollback()
     finally:
         db.close()
+
+# Automatically ensure schema migration and tables exist upon module import
+try:
+    init_db()
+except Exception as _init_err:
+    logger.debug(f"Automatic schema init warning: {_init_err}")

@@ -49,6 +49,19 @@ def ask_document_question(
             detail="This document is an unsearchable scanned image PDF. OCR processing is required before asking questions."
         )
 
+    if doc.status == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This document failed during processing: {doc.error_message or 'Unknown error'}. Cannot run Chat & Ask."
+        )
+
+    if doc.status not in ["completed", "ready"]:
+        stage_desc = doc.processing_stage or "indexing"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This policy document is still being processed and indexed ({stage_desc}). Please wait until processing completes before asking questions."
+        )
+
     user_email = current_user.get("sub") if current_user else "analyst@policylens.ai"
     user = db.query(User).filter(User.email == user_email).first()
     user_id = user.id if user else doc.user_id

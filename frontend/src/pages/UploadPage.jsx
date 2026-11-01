@@ -19,7 +19,7 @@ import {
   ChevronUp,
   Sparkles
 } from 'lucide-react';
-import { uploadDocument, getDocumentText, getDocumentExplanation } from '../services/api';
+import { uploadDocument, getDocumentText, getDocumentExplanation, getDocumentStatus } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
 export const UploadPage = () => {
@@ -93,44 +93,94 @@ export const UploadPage = () => {
 
     try {
       setUploading(true);
-      setUploadProgress(15);
+      setUploadProgress(10);
       setProcessingStage('Uploading PDF document to server...');
 
+      // 1. Upload file and immediately receive document ID
       const response = await uploadDocument(file, (progress) => {
-        setUploadProgress(Math.min(progress, 60));
-        if (progress > 30) {
-          setProcessingStage('Extracting text & preserving page boundaries with PyMuPDF...');
-        }
+        setUploadProgress(Math.min(Math.round(progress * 0.25), 25));
       });
 
-      setUploadProgress(75);
-      setProcessingStage('Classifying policy clauses & generating vector embeddings...');
+      const initialDoc = response.document;
+      setUploadedDoc(initialDoc);
 
-      const doc = response.document;
-      setUploadedDoc(doc);
-
-      if (doc.status === 'ready') {
-        setUploadProgress(85);
-        setProcessingStage('Synthesizing structured 10-point policy explanation...');
-
-        // Parallel fetch for text preview and structured explanation
+      // If document is already completed (e.g. deduplicated upload)
+      if (initialDoc.status === 'completed' || initialDoc.status === 'ready') {
+        setUploadProgress(100);
+        setProcessingStage('Processing complete! Policy is ready for analysis.');
         const [textResp, explResp] = await Promise.all([
-          getDocumentText(doc.id).catch(() => null),
-          getDocumentExplanation(doc.id).catch(() => null)
+          getDocumentText(initialDoc.id).catch(() => null),
+          getDocumentExplanation(initialDoc.id).catch(() => null)
         ]);
-
         setExtractedData(textResp);
         setExplanationData(explResp);
         setSelectedPage(1);
         setActiveTab('explanation');
+        toast.success(`Policy document ready: ${initialDoc.filename}`);
+        return;
+      }
 
-        setUploadProgress(100);
-        setProcessingStage('Processing complete! Policy is ready for analysis.');
-        toast.success(`Successfully processed ${doc.filename}!`);
-      } else if (doc.status === 'scanned_ocr_required') {
+      // If document is marked as scanned OCR required
+      if (initialDoc.status === 'scanned_ocr_required') {
         toast.warning('Scanned document detected: OCR is required for text search.');
         setUploadProgress(100);
-        setProcessingStage('Scanned document flagged.');
+        setProcessingStage('Scanned image document flagged.');
+        return;
+      }
+
+      // 2. Poll background processing status until completion
+      setUploadProgress(30);
+      setProcessingStage(initialDoc.processing_stage || 'Extracting text and tables...');
+
+      const pollIntervalMs = 1500;
+      let isFinished = false;
+
+      while (!isFinished) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+        try {
+          const statusResp = await getDocumentStatus(initialDoc.id);
+
+          setUploadProgress(Math.max(30, statusResp.processing_progress || 30));
+          setProcessingStage(statusResp.processing_stage || 'Processing document...');
+          setUploadedDoc(statusResp);
+
+          if (statusResp.status === 'completed' || statusResp.status === 'ready') {
+            isFinished = true;
+            setUploadProgress(100);
+            setProcessingStage('Processing complete! Policy is ready for analysis.');
+
+            const [textResp, explResp] = await Promise.all([
+              getDocumentText(initialDoc.id).catch(() => null),
+              getDocumentExplanation(initialDoc.id).catch(() => null)
+            ]);
+
+            setExtractedData(textResp);
+            setExplanationData(explResp);
+            setSelectedPage(1);
+            setActiveTab('explanation');
+            toast.success(`Successfully processed ${statusResp.filename}!`);
+            break;
+          }
+
+          if (statusResp.status === 'failed') {
+            isFinished = true;
+            const errMsg = statusResp.error_message || 'Background processing failed.';
+            setErrorMessage(errMsg);
+            toast.error(errMsg);
+            break;
+          }
+
+          if (statusResp.status === 'scanned_ocr_required') {
+            isFinished = true;
+            toast.warning('Scanned document detected: OCR is required for text search.');
+            setUploadProgress(100);
+            setProcessingStage('Scanned image document flagged.');
+            break;
+          }
+        } catch (pollErr) {
+          console.warn('Error polling document status:', pollErr);
+        }
       }
     } catch (err) {
       console.error('Upload error:', err);

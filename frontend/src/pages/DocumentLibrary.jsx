@@ -95,6 +95,36 @@ export const DocumentLibrary = () => {
     }));
   };
 
+  const renderStatusBadge = (doc) => {
+    if (doc.status === 'completed' || doc.status === 'ready') {
+      return (
+        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+          Ready
+        </span>
+      );
+    }
+    if (doc.status === 'processing') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
+          Processing
+        </span>
+      );
+    }
+    if (doc.status === 'scanned_ocr_required') {
+      return (
+        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200">
+          OCR Required
+        </span>
+      );
+    }
+    return (
+      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-50 text-rose-700 border border-rose-200">
+        Failed
+      </span>
+    );
+  };
+
   const confirmDelete = async () => {
     if (!docToDelete) return;
     try {
@@ -223,15 +253,7 @@ export const DocumentLibrary = () => {
                   <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 text-blue-600 flex items-center justify-center shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
                     <FileText className="w-6 h-6" />
                   </div>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
-                      doc.status === 'ready'
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : 'bg-amber-50 text-amber-700 border border-amber-200'
-                    }`}
-                  >
-                    {doc.status === 'ready' ? 'Ready' : 'OCR Required'}
-                  </span>
+                  {renderStatusBadge(doc)}
                 </div>
 
                 <div>
@@ -330,15 +352,7 @@ export const DocumentLibrary = () => {
                     <td className="px-6 py-4 font-mono text-xs">{(doc.file_size / 1024).toFixed(0)} KB</td>
                     <td className="px-6 py-4 text-xs text-slate-500">{new Date(doc.upload_date).toLocaleDateString()}</td>
                     <td className="px-6 py-4">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${
-                          doc.status === 'ready'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}
-                      >
-                        {doc.status}
-                      </span>
+                      {renderStatusBadge(doc)}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
