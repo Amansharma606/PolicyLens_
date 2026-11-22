@@ -4,7 +4,9 @@ os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 import json
 import time
+import zlib
 import threading
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 import numpy as np
 from app.core.config import settings
@@ -12,78 +14,130 @@ from app.core.logging import logger
 
 class EmbeddingService:
     """
-    High-Performance Offline Embedding Service supporting cached BAAI/bge-m3, MiniLM,
-    and internal dense semantic vectorizer.
-    Enforces thread-safe singleton loading, bounded sequence lengths (512 tokens),
-    and incremental batch encoding with live progress reporting.
+    High-Performance Embedding Service supporting cached neural models (BGE-M3, MiniLM)
+    and an ultra-fast, deterministic dense semantic vectorizer.
+    Guarantees zero-hang offline execution, persistent singleton initialization,
+    and batched live progress reporting.
     """
 
     _model = None
-    _model_name = "BAAI/bge-m3"
-    _vector_dim = 1024
+    _model_name = "internal_dense_semantic_vectorizer"
+    _vector_dim = 256
+    _is_initialized = False
     _load_lock = threading.Lock()
 
     @classmethod
-    def get_model(cls):
-        if cls._model is None:
-            with cls._load_lock:
-                if cls._model is None:
+    def _has_local_model_cache(cls, model_name: str) -> bool:
+        """
+        Fast disk check to see if local HuggingFace cache contains model weights.
+        Avoids triggering slow dynamic imports or network/offline errors when no cache exists.
+        """
+        try:
+            hub_dir = Path.home() / ".cache" / "huggingface" / "hub"
+            if not hub_dir.exists():
+                return False
+            safe_name = "models--" + model_name.replace("/", "--")
+            model_path = hub_dir / safe_name
+            if model_path.exists():
+                # Check that snapshots exist with actual files
+                snapshots_dir = model_path / "snapshots"
+                if snapshots_dir.exists() and any(snapshots_dir.iterdir()):
+                    return True
+            # Also check if it is a direct local directory path
+            direct_path = Path(model_name)
+            if direct_path.exists() and direct_path.is_dir():
+                return True
+        except Exception:
+            pass
+        return False
+
+    @classmethod
+    def initialize(cls):
+        """
+        Idempotent singleton initializer. Inspects local models and initializes the appropriate
+        embedder. Once executed, future checks take 0 ms.
+        """
+        if cls._is_initialized:
+            return cls._model
+
+        with cls._load_lock:
+            if cls._is_initialized:
+                return cls._model
+
+            preferred_models = [
+                settings.EMBEDDING_MODEL_NAME,
+                "BAAI/bge-m3",
+                "sentence-transformers/all-MiniLM-L6-v2"
+            ]
+            # Deduplicate preserving order
+            seen = set()
+            targets_to_check = []
+            for m in preferred_models:
+                if m and m not in seen:
+                    seen.add(m)
+                    targets_to_check.append(m)
+
+            found_target = None
+            for target in targets_to_check:
+                if cls._has_local_model_cache(target):
+                    found_target = target
+                    break
+
+            if found_target:
+                try:
+                    logger.info(f"Loading local cached embedding model '{found_target}'...")
                     from sentence_transformers import SentenceTransformer
                     import torch
 
-                    # Optimize CPU worker thread count for maximum inference throughput
-                    try:
-                        num_cpus = os.cpu_count() or 4
-                        torch.set_num_threads(min(8, num_cpus))
-                    except Exception:
-                        pass
+                    num_cpus = os.cpu_count() or 4
+                    torch.set_num_threads(min(8, num_cpus))
 
-                    preferred_models = [
-                        "BAAI/bge-m3",
-                        "sentence-transformers/all-MiniLM-L6-v2"
-                    ]
-                    if settings.EMBEDDING_MODEL_NAME not in preferred_models:
-                        preferred_models.insert(0, settings.EMBEDDING_MODEL_NAME)
+                    model = SentenceTransformer(found_target, local_files_only=True)
+                    if hasattr(model, "max_seq_length"):
+                        model.max_seq_length = 512
 
-                    for target in preferred_models:
-                        try:
-                            logger.info(f"Loading cached embedding model '{target}'...")
-                            model = SentenceTransformer(target, local_files_only=True)
-                            
-                            # Bound max sequence length to 512 tokens to prevent O(N^2) quadratic CPU stall
-                            if hasattr(model, "max_seq_length"):
-                                model.max_seq_length = 512
+                    cls._model = model
+                    cls._model_name = found_target
 
-                            cls._model = model
-                            cls._model_name = target
-                            
-                            # Get dimension safely across sentence-transformers versions
-                            if hasattr(model, "get_sentence_embedding_dimension"):
-                                cls._vector_dim = model.get_sentence_embedding_dimension()
-                            elif hasattr(model, "get_embedding_dimension"):
-                                cls._vector_dim = model.get_embedding_dimension()
-                            else:
-                                cls._vector_dim = 1024 if "bge-m3" in target else 384
+                    if hasattr(model, "get_sentence_embedding_dimension"):
+                        cls._vector_dim = model.get_sentence_embedding_dimension()
+                    elif hasattr(model, "get_embedding_dimension"):
+                        cls._vector_dim = model.get_embedding_dimension()
+                    else:
+                        cls._vector_dim = 1024 if "bge-m3" in found_target else 384
 
-                            logger.info(f"Loaded locally cached embedding model {target} (dim={cls._vector_dim}, max_seq_len=512).")
-                            return cls._model
-                        except Exception as e:
-                            logger.debug(f"Could not load {target} with local_files_only: {e}")
-
-                    logger.warning("Could not load neural embedding models from local cache. Using internal dense semantic vectorizer.")
+                    logger.info(f"Successfully loaded embedding model '{found_target}' (dim={cls._vector_dim}).")
+                except Exception as e:
+                    logger.warning(f"Could not load '{found_target}' ({e}). Falling back to fast dense vectorizer.")
                     cls._model = None
                     cls._model_name = "internal_dense_semantic_vectorizer"
                     cls._vector_dim = 256
+            else:
+                logger.info("Using internal high-speed dense semantic vectorizer (dim=256).")
+                cls._model = None
+                cls._model_name = "internal_dense_semantic_vectorizer"
+                cls._vector_dim = 256
 
+            cls._is_initialized = True
+            return cls._model
+
+    @classmethod
+    def get_model(cls):
+        if not cls._is_initialized:
+            cls.initialize()
         return cls._model
 
     @classmethod
     def get_model_name(cls) -> str:
-        return cls._model_name or "BAAI/bge-m3"
+        if not cls._is_initialized:
+            cls.initialize()
+        return cls._model_name
 
     @classmethod
     def get_vector_dim(cls) -> int:
-        return cls._vector_dim or 1024
+        if not cls._is_initialized:
+            cls.initialize()
+        return cls._vector_dim
 
     @classmethod
     def encode_text(cls, text: str) -> List[float]:
@@ -93,7 +147,7 @@ class EmbeddingService:
                 emb = model.encode(text, normalize_embeddings=True)
                 return emb.tolist() if hasattr(emb, "tolist") else list(emb)
             except Exception as e:
-                logger.error(f"Error in model encoding: {e}")
+                logger.error(f"Error in neural model encoding: {e}")
 
         return cls._fallback_dense_encode(text)
 
@@ -101,12 +155,11 @@ class EmbeddingService:
     def encode_batch(
         cls,
         texts: List[str],
-        batch_size: int = 16,
+        batch_size: int = 32,
         on_batch_complete: Optional[Callable[[int, int, List[List[float]]], None]] = None
     ) -> List[List[float]]:
         """
-        Batch encodes texts with incremental progress callbacks and batch-level timing logs.
-        Guarantees that progress never freezes at 55%.
+        Batch encodes texts with incremental progress callbacks and high throughput.
         """
         if not texts:
             return []
@@ -119,7 +172,6 @@ class EmbeddingService:
         if model is not None:
             try:
                 for batch_idx in range(total_batches):
-                    t0_batch = time.time()
                     start_i = batch_idx * batch_size
                     end_i = min(start_i + batch_size, total_texts)
                     batch_texts = texts[start_i:end_i]
@@ -133,13 +185,6 @@ class EmbeddingService:
                     batch_list = [e.tolist() if hasattr(e, "tolist") else list(e) for e in batch_embs]
                     all_embeddings.extend(batch_list)
 
-                    t_batch = time.time() - t0_batch
-                    logger.info(
-                        f"[TIMING] BGE-M3 Batch {batch_idx + 1}/{total_batches} "
-                        f"({len(batch_texts)} clauses encoded in {t_batch:.2f}s) "
-                        f"[{end_i}/{total_texts} total]"
-                    )
-
                     if on_batch_complete:
                         try:
                             on_batch_complete(batch_idx + 1, total_batches, batch_list)
@@ -148,11 +193,23 @@ class EmbeddingService:
 
                 return all_embeddings
             except Exception as e:
-                logger.error(f"Error in batch model encoding: {e}")
+                logger.error(f"Error in batch neural encoding: {e}. Falling back to dense vectorizer.")
 
-        # Fallback dense encoder
-        logger.warning("Using fallback dense encoder for batch.")
-        return [cls._fallback_dense_encode(t) for t in texts]
+        # High-speed deterministic fallback vectorizer with batch callbacks
+        for batch_idx in range(total_batches):
+            start_i = batch_idx * batch_size
+            end_i = min(start_i + batch_size, total_texts)
+            batch_texts = texts[start_i:end_i]
+            batch_embs = [cls._fallback_dense_encode(t) for t in batch_texts]
+            all_embeddings.extend(batch_embs)
+
+            if on_batch_complete:
+                try:
+                    on_batch_complete(batch_idx + 1, total_batches, batch_embs)
+                except Exception as cb_err:
+                    logger.debug(f"Error in batch callback: {cb_err}")
+
+        return all_embeddings
 
     @classmethod
     def cosine_similarity(cls, vec_a: List[float], vec_b: List[float]) -> float:
@@ -168,18 +225,31 @@ class EmbeddingService:
 
     @classmethod
     def _fallback_dense_encode(cls, text: str) -> List[float]:
+        """
+        Fast deterministic dense vector encoder.
+        Uses CRC32 hashing over words and tri-grams to produce a normalized 256-d vector.
+        100% reproducible across Python process restarts and platforms.
+        """
         dim = cls._vector_dim
         vec = np.zeros(dim, dtype=np.float32)
+        if not text:
+            return vec.tolist()
+
         words = text.lower().split()
         for word in words:
-            h1 = hash(word) % dim
+            encoded_word = word.encode("utf-8", errors="ignore")
+            h1 = zlib.crc32(encoded_word) % dim
             vec[h1] += 1.0
-            for i in range(len(word) - 2):
-                tri = word[i:i+3]
-                h2 = hash(tri) % dim
-                vec[h2] += 0.5
+
+            w_len = len(word)
+            if w_len > 3:
+                for i in range(w_len - 2):
+                    tri = word[i:i+3].encode("utf-8", errors="ignore")
+                    h2 = zlib.crc32(tri) % dim
+                    vec[h2] += 0.5
 
         norm = np.linalg.norm(vec)
         if norm > 0:
-            vec = vec / norm
+            vec /= norm
         return vec.tolist()
+

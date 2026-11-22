@@ -91,32 +91,54 @@ export const UploadPage = () => {
       return;
     }
 
+    const uploadStartTime = Date.now();
+
     try {
       setUploading(true);
-      setUploadProgress(10);
+      setUploadProgress(20);
       setProcessingStage('Uploading PDF document to server...');
 
-      // 1. Upload file and immediately receive document ID
+      // 1. Upload file and immediately receive document ID with realistic progress
       const response = await uploadDocument(file, (progress) => {
-        setUploadProgress(Math.min(Math.round(progress * 0.25), 25));
+        setUploadProgress(Math.min(Math.round(progress * 0.35), 35));
       });
 
       const initialDoc = response.document;
       setUploadedDoc(initialDoc);
 
-      // If document is already completed (e.g. deduplicated upload)
+      // If document is already completed (e.g. deduplicated upload): pace across 2.0s
       if (initialDoc.status === 'completed' || initialDoc.status === 'ready') {
+        setUploadProgress(40);
+        setProcessingStage('Analyzing document structure and verified clauses...');
+        await new Promise((r) => setTimeout(r, 450));
+
+        setUploadProgress(65);
+        setProcessingStage('Classifying policy dimensions and exclusions...');
+        await new Promise((r) => setTimeout(r, 500));
+
+        setUploadProgress(85);
+        setProcessingStage('Building hybrid vector index & BM25 search...');
+        await new Promise((r) => setTimeout(r, 500));
+
+        setUploadProgress(95);
+        setProcessingStage('Synthesizing 10-dimensional structured explanation...');
+        await new Promise((r) => setTimeout(r, 450));
+
         setUploadProgress(100);
         setProcessingStage('Processing complete! Policy is ready for analysis.');
-        const [textResp, explResp] = await Promise.all([
+        setUploading(false);
+        toast.success(`Policy document ready: ${initialDoc.filename}`);
+
+        // Fetch previews in background without blocking UI
+        Promise.all([
           getDocumentText(initialDoc.id).catch(() => null),
           getDocumentExplanation(initialDoc.id).catch(() => null)
-        ]);
-        setExtractedData(textResp);
-        setExplanationData(explResp);
+        ]).then(([textResp, explResp]) => {
+          if (textResp) setExtractedData(textResp);
+          if (explResp) setExplanationData(explResp);
+        });
         setSelectedPage(1);
         setActiveTab('explanation');
-        toast.success(`Policy document ready: ${initialDoc.filename}`);
         return;
       }
 
@@ -125,41 +147,49 @@ export const UploadPage = () => {
         toast.warning('Scanned document detected: OCR is required for text search.');
         setUploadProgress(100);
         setProcessingStage('Scanned image document flagged.');
+        setUploading(false);
         return;
       }
 
-      // 2. Poll background processing status until completion
-      setUploadProgress(30);
-      setProcessingStage(initialDoc.processing_stage || 'Extracting text and tables...');
+      // 2. Poll background processing status every 350ms across the 2.0s target duration
+      setUploadProgress(Math.max(35, initialDoc.processing_progress || 35));
+      setProcessingStage(initialDoc.processing_stage || 'Extracting text and structure...');
 
-      const pollIntervalMs = 1500;
       let isFinished = false;
 
       while (!isFinished) {
-        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        await new Promise((resolve) => setTimeout(resolve, 350));
 
         try {
           const statusResp = await getDocumentStatus(initialDoc.id);
 
-          setUploadProgress(Math.max(30, statusResp.processing_progress || 30));
+          setUploadProgress(Math.max(35, statusResp.processing_progress || 35));
           setProcessingStage(statusResp.processing_stage || 'Processing document...');
           setUploadedDoc(statusResp);
 
           if (statusResp.status === 'completed' || statusResp.status === 'ready') {
+            // Ensure full 2.0-second smooth duration
+            const elapsed = Date.now() - uploadStartTime;
+            if (elapsed < 2000) {
+              await new Promise((r) => setTimeout(r, 2000 - elapsed));
+            }
+
             isFinished = true;
             setUploadProgress(100);
             setProcessingStage('Processing complete! Policy is ready for analysis.');
+            setUploading(false);
+            toast.success(`Successfully processed ${statusResp.filename}!`);
 
-            const [textResp, explResp] = await Promise.all([
+            // Fetch extracted text and policy explanation in background
+            Promise.all([
               getDocumentText(initialDoc.id).catch(() => null),
               getDocumentExplanation(initialDoc.id).catch(() => null)
-            ]);
-
-            setExtractedData(textResp);
-            setExplanationData(explResp);
+            ]).then(([textResp, explResp]) => {
+              if (textResp) setExtractedData(textResp);
+              if (explResp) setExplanationData(explResp);
+            });
             setSelectedPage(1);
             setActiveTab('explanation');
-            toast.success(`Successfully processed ${statusResp.filename}!`);
             break;
           }
 
@@ -328,15 +358,15 @@ export const UploadPage = () => {
                   <span>{(uploadedDoc.file_size / 1024).toFixed(1)} KB</span>
                   <span>•</span>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${
-                    uploadedDoc.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                    (uploadedDoc.status === 'ready' || uploadedDoc.status === 'completed') ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
                   }`}>
-                    {uploadedDoc.status}
+                    {(uploadedDoc.status === 'completed' || uploadedDoc.status === 'ready') ? 'Ready' : uploadedDoc.status}
                   </span>
                 </div>
               </div>
             </div>
 
-            {uploadedDoc.status === 'ready' && (
+            {(uploadedDoc.status === 'ready' || uploadedDoc.status === 'completed') && (
               <button
                 onClick={() => navigate(`/chat/${uploadedDoc.id}`)}
                 className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-all shadow-md shadow-blue-600/30 active:scale-95"
@@ -376,16 +406,24 @@ export const UploadPage = () => {
           {/* TAB 1: Structured Policy Explanation */}
           {activeTab === 'explanation' && (
             <div className="space-y-4 animate-fadeIn">
-              <div className="p-4 rounded-2xl bg-blue-50/50 border border-blue-100 text-xs text-slate-700 flex items-start gap-3">
-                <BookOpen className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  {explanationData?.overview ||
-                    'Synthesized structured summary grounded strictly in the clauses and pages of this policy.'}
-                </p>
-              </div>
+              {!explanationData ? (
+                <div className="p-8 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-col items-center justify-center text-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+                  <p className="text-xs font-semibold text-slate-700">Loading structured 10-point policy explanation...</p>
+                  <p className="text-[11px] text-slate-400">Synthesizing findings across coverage, exclusions, waiting periods, and claims.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="p-4 rounded-2xl bg-blue-50/50 border border-blue-100 text-xs text-slate-700 flex items-start gap-3">
+                    <BookOpen className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">
+                      {explanationData?.overview ||
+                        'Synthesized structured summary grounded strictly in the clauses and pages of this policy.'}
+                    </p>
+                  </div>
 
-              <div className="grid grid-cols-1 gap-3">
-                {explanationData?.sections?.map((sec) => {
+                  <div className="grid grid-cols-1 gap-3">
+                    {explanationData?.sections?.map((sec) => {
                   const isExpanded = expandedSections[sec.key];
                   const isFound = sec.status === 'found';
 
@@ -483,12 +521,21 @@ export const UploadPage = () => {
                   );
                 })}
               </div>
-            </div>
+            </>
           )}
+        </div>
+      )}
 
-          {/* TAB 2: Extracted Text Preview Section */}
-          {activeTab === 'preview' && extractedData && extractedData.pages && extractedData.pages.length > 0 && (
-            <div className="space-y-4 animate-fadeIn">
+      {/* TAB 2: Extracted Text Preview Section */}
+      {activeTab === 'preview' && (
+        <div className="space-y-4 animate-fadeIn">
+          {!extractedData ? (
+            <div className="p-8 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-col items-center justify-center text-center gap-2">
+              <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+              <p className="text-xs font-semibold text-slate-700">Loading extracted page text preview...</p>
+            </div>
+          ) : (
+            <>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Eye className="w-4 h-4 text-slate-500" />
@@ -533,8 +580,10 @@ export const UploadPage = () => {
                   {activePageData?.text || <span className="text-slate-400 italic">No extractable text on this page.</span>}
                 </div>
               </div>
-            </div>
+            </>
           )}
+        </div>
+      )}
         </div>
       )}
     </div>

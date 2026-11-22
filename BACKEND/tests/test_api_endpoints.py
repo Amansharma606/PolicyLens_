@@ -43,7 +43,9 @@ def test_api_endpoints():
         filename="CareShield_API_Test.pdf"
     )
 
+    from fastapi import Response
     upload_resp = documents.upload_document(
+        response=Response(),
         file=upload_file,
         current_user=user_payload,
         db=db
@@ -64,7 +66,7 @@ def test_api_endpoints():
 
     # 6. Test Get Structured Policy Explanation
     expl_resp = documents.get_document_explanation(doc_id, db=db)
-    assert len(expl_resp["sections"]) == 10
+    assert len(expl_resp.sections) == 10
     print(f"[PASS] 6. GET /api/documents/{doc_id}/explanation controller verified. 10 dimensions generated.")
 
     # 7. Test Ask Question (RAG)

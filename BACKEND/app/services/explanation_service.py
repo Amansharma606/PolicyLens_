@@ -74,12 +74,26 @@ class PolicyExplanationService:
         }
     ]
 
+    # Precompile regex patterns for ultra-fast matching
+    _COMPILED_PATTERNS = {
+        dim["key"]: re.compile(r"\b(?:" + "|".join(re.escape(k) for k in dim["keywords"]) + r")\b", re.IGNORECASE)
+        for dim in DIMENSIONS
+    }
+
     @classmethod
-    def generate_explanation(cls, db: Session, document: Document) -> Dict[str, Any]:
+    def generate_explanation(
+        cls,
+        db: Session,
+        document: Document,
+        clauses: Optional[List[Any]] = None
+    ) -> Dict[str, Any]:
         """
         Extracts evidence for each of the 10 dimensions from document clauses.
+        Uses in-memory clauses if provided to avoid redundant database reads.
         """
-        clauses = db.query(DocumentClause).filter(DocumentClause.document_id == document.id).all()
+        if clauses is None:
+            clauses = db.query(DocumentClause).filter(DocumentClause.document_id == document.id).all()
+
         sections_found = []
 
         overview_text = (
@@ -90,18 +104,16 @@ class PolicyExplanationService:
         for dim in cls.DIMENSIONS:
             key = dim["key"]
             title = dim["title"]
-            keywords = dim["keywords"]
             target_cats = set(dim["categories"])
+            pattern = cls._COMPILED_PATTERNS[key]
 
             matching_clauses = []
             for c in clauses:
-                # Check category match
-                cat_match = c.category in target_cats
-                # Check keyword match
-                text_lower = c.clean_text.lower()
-                sec_lower = (c.section_name or "").lower()
-                kw_match = any(re.search(r"\b" + re.escape(kw) + r"\b", text_lower) for kw in keywords) or \
-                           any(re.search(r"\b" + re.escape(kw) + r"\b", sec_lower) for kw in keywords)
+                cat = getattr(c, "category", "") or ""
+                cat_match = cat in target_cats
+                clean_t = getattr(c, "clean_text", "") or getattr(c, "original_text", "")
+                sec_t = getattr(c, "section_name", "") or ""
+                kw_match = bool(pattern.search(clean_t) or pattern.search(sec_t))
 
                 if cat_match and kw_match:
                     matching_clauses.append((c, 2.0))

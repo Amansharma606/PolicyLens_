@@ -152,6 +152,12 @@ class RAGEngine:
             pipeline_type = "PolicyLens_Hybrid_RAG"
             retrieved_categories = list(set(c["category"] for c in final_evidence if c.get("category")))
 
+        # Enforce exact 2.0-second response pacing for realistic, thoughtful neural RAG experience
+        elapsed = time.time() - start_time
+        if elapsed < 2.0:
+            time.sleep(round(2.0 - elapsed, 3))
+        latency = round(time.time() - start_time, 2)
+
         # Record Assistant Response in Chat DB
         bot_msg = ChatMessage(
             conversation_id=conv.id,

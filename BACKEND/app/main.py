@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.db.database import init_db
 from app.api import health, auth, documents, chat
+from app.services.embeddings import EmbeddingService
 
 # Initialize Database Schema & Seed default accounts
 init_db()
@@ -16,6 +17,15 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+@app.on_event("startup")
+def startup_event():
+    # Pre-warm embedding service so uploads and QA are instant
+    try:
+        EmbeddingService.initialize()
+        logger.info(f"PolicyLens ready: Embedding engine initialized with {EmbeddingService.get_model_name()}.")
+    except Exception as e:
+        logger.warning(f"Embedding pre-warming notification: {e}")
 
 # Configure Cross-Origin Resource Sharing (CORS)
 app.add_middleware(

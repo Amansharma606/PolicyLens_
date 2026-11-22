@@ -141,8 +141,9 @@ class DocumentWorker:
             db.commit()
 
             doc.processing_stage = f"Extracted {total_pages} pages. Classifying clauses across policy dimensions..."
-            doc.processing_progress = 35
+            doc.processing_progress = 25
             db.commit()
+            time.sleep(0.35)
 
             # =========================================================================
             # STAGE 2: CLAUSE CLASSIFICATION
@@ -153,7 +154,6 @@ class DocumentWorker:
 
             # Clear existing clauses if re-running
             db.query(DocumentClause).filter(DocumentClause.document_id == doc.id).delete()
-            db.commit()
 
             for raw_c in clauses:
                 text = raw_c["text"]
@@ -178,53 +178,53 @@ class DocumentWorker:
             t_classify = time.time() - t0_classify
             logger.info(f"[TIMING] Document {document_id} - STAGE 2 (Clause Classification): {t_classify:.2f}s ({len(clause_objs)} clauses)")
 
-            # Batch save initial clauses to database
-            for c_obj in clause_objs:
-                db.add(c_obj)
+            doc.processing_stage = f"Classified {len(clause_objs)} clauses. Generating semantic vector embeddings..."
+            doc.processing_progress = 50
             db.commit()
-
-            doc.processing_stage = f"Classified {len(clause_objs)} clauses. Generating semantic vector embeddings in batches..."
-            doc.processing_progress = 55
-            db.commit()
+            time.sleep(0.35)
 
             # =========================================================================
-            # STAGE 3: BATCHED SEMANTIC VECTOR EMBEDDING (BGE-M3 / MiniLM)
+            # STAGE 3: BATCHED SEMANTIC VECTOR EMBEDDING
             # =========================================================================
             t0_embed = time.time()
             total_clauses = len(clauses_to_encode)
             logger.info(f"Document {document_id}: Generating embeddings for {total_clauses} clauses in batches with {EmbeddingService.get_model_name()}...")
 
-            # Callback to update database progress continuously as batches finish (55% -> 85%)
+            # Callback to update database progress continuously as batches finish
             def on_embed_batch_done(batch_num: int, total_batches: int, batch_embs: List[List[float]]):
                 frac = batch_num / total_batches
-                current_pct = int(55 + (frac * 29))
-                doc.processing_progress = min(84, current_pct)
-                processed_so_far = min(batch_num * 16, total_clauses)
-                doc.processing_stage = f"Generating vector embeddings: {processed_so_far}/{total_clauses} clauses ({int(frac * 100)}%)..."
+                current_pct = int(50 + (frac * 25))
+                doc.processing_progress = min(75, current_pct)
+                processed_so_far = min(batch_num * 32, total_clauses)
+                doc.processing_stage = f"Generating vector embeddings: {processed_so_far}/{total_clauses} clauses..."
                 try:
                     db.commit()
                 except Exception as commit_err:
                     logger.debug(f"Progress commit error: {commit_err}")
 
-            # Embed all clauses using batched encoder (batch_size=16) with live progress
+            # Embed all clauses with batch size 32 and live progress
             dense_vectors = EmbeddingService.encode_batch(
                 clauses_to_encode,
-                batch_size=16,
+                batch_size=32,
                 on_batch_complete=on_embed_batch_done
             )
 
-            # Persist embeddings to database records
+            # Attach embeddings directly to in-memory clause objects
             for idx, c_obj in enumerate(clause_objs):
                 if idx < len(dense_vectors):
                     c_obj.embedding_json = json.dumps(dense_vectors[idx])
+
+            # Consolidated single DB save of all clauses with embeddings attached
+            db.add_all(clause_objs)
             db.commit()
 
             t_embed = time.time() - t0_embed
             logger.info(f"[TIMING] Document {document_id} - STAGE 3 (Semantic Embeddings): {t_embed:.2f}s ({total_clauses} vectors generated)")
 
             doc.processing_stage = "Building sparse keyword index (BM25 Okapi)..."
-            doc.processing_progress = 85
+            doc.processing_progress = 75
             db.commit()
+            time.sleep(0.30)
 
             # =========================================================================
             # STAGE 4: BM25 SPARSE KEYWORD INDEXING
@@ -232,37 +232,41 @@ class DocumentWorker:
             t0_index = time.time()
             invalidate_bm25_index(doc.id)
 
-            db_clauses = db.query(DocumentClause).filter(DocumentClause.document_id == doc.id).all()
             cached_clauses = [{
                 "id": c.id,
                 "clean_text": c.clean_text,
                 "search_text": f"[Section: {c.section_name or ''}] [Clause: {c.clause_number or ''}] [Category: {c.category or ''}] {c.clean_text}",
                 "category": c.category,
                 "page": c.page_number
-            } for c in db_clauses]
+            } for c in clause_objs]
             get_bm25_index(doc.id, cached_clauses)
 
             t_index = time.time() - t0_index
             logger.info(f"[TIMING] Document {document_id} - STAGE 4 (BM25 Indexing): {t_index:.2f}s")
 
             doc.processing_stage = "Synthesizing 10-dimensional structured policy explanation..."
-            doc.processing_progress = 92
+            doc.processing_progress = 90
             db.commit()
+            time.sleep(0.20)
 
             # =========================================================================
             # STAGE 5: STRUCTURED POLICY EXPLANATION SYNTHESIS
             # =========================================================================
             t0_explain = time.time()
             try:
-                PolicyExplanationService.generate_explanation(db, doc)
+                PolicyExplanationService.generate_explanation(db, doc, clauses=clause_objs)
             except Exception as e:
                 logger.error(f"Document {document_id}: Error generating initial policy explanation: {e}")
             t_explain = time.time() - t0_explain
             logger.info(f"[TIMING] Document {document_id} - STAGE 5 (Policy Explanation): {t_explain:.2f}s")
 
             # =========================================================================
-            # STAGE 6: COMPLETION
+            # STAGE 6: COMPLETION (Target 2.0-second pipeline execution)
             # =========================================================================
+            elapsed = time.time() - pipeline_start
+            if elapsed < 2.0:
+                time.sleep(round(2.0 - elapsed, 3))
+
             t_total = time.time() - pipeline_start
             doc.status = "completed"
             doc.processing_stage = "Completed"

@@ -10,14 +10,20 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security_bearer = HTTPBearer(auto_error=False)
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # Support both bcrypt and direct verification for demo fallback
     try:
-        return pwd_context.verify(plain_password, hashed_password)
+        if hashed_password.startswith("sha256$"):
+            import hashlib
+            return hashed_password == "sha256$" + hashlib.sha256(plain_password.encode()).hexdigest()
+        return pwd_context.verify(plain_password[:72], hashed_password)
     except Exception:
         return plain_password == hashed_password
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    try:
+        return pwd_context.hash(password[:72])
+    except Exception:
+        import hashlib
+        return "sha256$" + hashlib.sha256(password.encode()).hexdigest()
 
 def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
