@@ -64,7 +64,14 @@ def test_api_endpoints():
     assert len(text_resp.pages) == 5
     print(f"[PASS] 5. GET /api/documents/{doc_id}/text controller verified. Pages: {len(text_resp.pages)}")
 
-    # 6. Test Get Structured Policy Explanation
+    # 6. Test Get Structured Policy Explanation (Stage 2 completes asynchronously after Stage 1 chat_ready)
+    import time as _time
+    for _ in range(150):
+        db.expire_all()
+        st = documents.get_document_status(doc_id, db=db)
+        if st.has_explanation or st.status == "failed":
+            break
+        _time.sleep(1.0)
     expl_resp = documents.get_document_explanation(doc_id, db=db)
     assert len(expl_resp.sections) == 10
     print(f"[PASS] 6. GET /api/documents/{doc_id}/explanation controller verified. 10 dimensions generated.")

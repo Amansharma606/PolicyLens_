@@ -1,6 +1,7 @@
 import json
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -55,11 +56,11 @@ def ask_document_question(
             detail=f"This document failed during processing: {doc.error_message or 'Unknown error'}. Cannot run Chat & Ask."
         )
 
-    if doc.status not in ["completed", "ready"]:
+    if doc.status not in ["chat_ready", "completed", "ready"]:
         stage_desc = doc.processing_stage or "indexing"
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"This policy document is still being processed and indexed ({stage_desc}). Please wait until processing completes before asking questions."
+            detail=f"This policy document is still being extracted ({stage_desc}). Please wait a moment before asking questions."
         )
 
     user_email = current_user.get("sub") if current_user else "analyst@policylens.ai"
@@ -91,6 +92,79 @@ def ask_document_question(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating grounded answer: {str(e)}"
         )
+
+@router.post("/documents/{document_id}/ask/stream", tags=["Chat & RAG"])
+def stream_document_question(
+    document_id: str,
+    request: QuestionRequest,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
+):
+    """
+    Real-time Server-Sent Events (SSE) RAG streaming endpoint for ChatGPT-style responses.
+    """
+    if not request.question or not request.question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question text cannot be empty."
+        )
+
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Policy document '{document_id}' not found."
+        )
+
+    if doc.status == "scanned_ocr_required":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This document is an unsearchable scanned image PDF. OCR processing is required before asking questions."
+        )
+
+    if doc.status == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This document failed during processing: {doc.error_message or 'Unknown error'}."
+        )
+
+    if doc.status not in ["chat_ready", "completed", "ready"]:
+        stage_desc = doc.processing_stage or "indexing"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This policy document is still being extracted ({stage_desc}). Please wait a moment."
+        )
+
+    user_email = current_user.get("sub") if current_user else "analyst@policylens.ai"
+    user = db.query(User).filter(User.email == user_email).first()
+    user_id = user.id if user else doc.user_id
+    question_clean = request.question.strip()
+
+    def event_stream():
+        try:
+            for item in RAGEngine.stream_question(
+                db=db,
+                document_id=document_id,
+                question=question_clean,
+                user_id=user_id,
+                conversation_id=request.conversation_id,
+                use_baseline=request.use_baseline or False,
+            ):
+                evt = item.get("event", "token")
+                yield f"event: {evt}\ndata: {json.dumps(item)}\n\n"
+        except Exception as exc:
+            logger.error(f"SSE streaming error: {exc}", exc_info=True)
+            yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @router.get("/documents/{document_id}/history", response_model=ConversationHistoryResponse, tags=["Chat & RAG"])
 def get_document_history(

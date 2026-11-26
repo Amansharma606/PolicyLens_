@@ -77,6 +77,89 @@ export const askQuestion = async (documentId, question, conversationId = null, u
   return response.data;
 };
 
+export const askQuestionStream = async (
+  documentId,
+  question,
+  conversationId = null,
+  { onMeta, onToken, onDone, onError } = {}
+) => {
+  const payload = { question, use_baseline: false };
+  if (conversationId) {
+    payload.conversation_id = conversationId;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/documents/${documentId}/ask/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let detail = 'Error connecting to streaming QA service.';
+    try {
+      const errJson = await response.json();
+      detail = errJson.detail || detail;
+    } catch {
+      // ignore parse failure
+    }
+    throw new Error(detail);
+  }
+
+  if (!response.body) {
+    throw new Error('Streaming is not supported in this browser environment.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  const processBlock = (block) => {
+    const lines = block.split(/\r?\n/);
+    let eventName = 'message';
+    const dataLines = [];
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trim());
+      }
+    }
+    if (dataLines.length === 0) return;
+    const rawData = dataLines.join('\n');
+    try {
+      const parsed = JSON.parse(rawData);
+      if (eventName === 'meta' || parsed.event === 'meta') {
+        onMeta?.(parsed);
+      } else if (eventName === 'token' || parsed.event === 'token') {
+        if (parsed.token) onToken?.(parsed.token);
+      } else if (eventName === 'done' || parsed.event === 'done') {
+        onDone?.(parsed);
+      } else if (eventName === 'error' || parsed.event === 'error') {
+        onError?.(new Error(parsed.detail || 'Streaming error'));
+      }
+    } catch {
+      // ignore incomplete JSON chunk
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\r?\n\r?\n/);
+    buffer = parts.pop() || '';
+    for (const part of parts) {
+      if (part.trim()) processBlock(part);
+    }
+  }
+  if (buffer.trim()) {
+    processBlock(buffer);
+  }
+};
+
 export const getDocumentHistory = async (documentId, conversationId = null) => {
   const url = conversationId 
     ? `/api/documents/${documentId}/history?conversation_id=${encodeURIComponent(conversationId)}`

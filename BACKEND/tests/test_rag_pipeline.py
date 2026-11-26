@@ -114,10 +114,14 @@ def test_rag_pipeline():
     assert len(ans4["sources"]) > 0
     print("[PASS] Test 4: Follow-up context retention verified.")
 
-    # Test Q5: Insufficient Evidence Handling
+    # Test Q5: Insufficient Evidence / Excluded Item Handling
     ans5 = RAGEngine.answer_question(db, test_doc.id, "Does this policy cover cosmetic dental veneers for beauty enhancement?")
     print(f"\nQ5: 'Does this policy cover cosmetic dental veneers?'\nStatus: {ans5['status']}\nAnswer: {ans5['answer']}")
-    assert ans5["status"] in ("insufficient_evidence", "answered")
+    low5 = ans5["answer"].lower().strip()
+    assert not low5.startswith("yes"), f"Hallucinated YES for excluded cosmetic/dental item: {ans5['answer']}"
+    assert ans5["status"] == "insufficient_evidence" or any(
+        w in low5 for w in ("not covered", "excluded", "does not cover", "no,", "no ", "does not contain")
+    ), f"Expected honest refusal or clear exclusion for Q5, got: {ans5['answer']}"
     print("[PASS] Test 5: Insufficient / negative evidence handled honestly.")
 
     db.close()

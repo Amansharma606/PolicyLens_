@@ -65,6 +65,7 @@ BACKEND/data/uploads/*
 !BACKEND/data/uploads/.gitkeep
 BACKEND/data/processed/*
 !BACKEND/data/processed/.gitkeep
+BACKEND/data/llama_cpp/
 
 # Node & Frontend
 node_modules/

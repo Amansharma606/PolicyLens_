@@ -40,15 +40,22 @@ class Settings(BaseModel):
     ALLOWED_EXTENSIONS: List[str] = [".pdf"]
 
     # LLM Settings
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini").lower()
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "auto").lower()
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 
-    # Models
-    EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
-    FALLBACK_EMBEDDING_MODEL: str = os.getenv("FALLBACK_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    # Models (default to zero-PyTorch ultra-fast BM25+TF-IDF indexing on CPU)
+    USE_NEURAL_EMBEDDINGS: bool = os.getenv("USE_NEURAL_EMBEDDINGS", "false").lower() in ("true", "1", "t")
+    EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
+    FALLBACK_EMBEDDING_MODEL: str = os.getenv("FALLBACK_EMBEDDING_MODEL", "BAAI/bge-m3")
     CLASSIFIER_MODEL_NAME: str = os.getenv("CLASSIFIER_MODEL_NAME", "microsoft/deberta-v3-base")
     RERANKER_MODEL_NAME: str = os.getenv("RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 

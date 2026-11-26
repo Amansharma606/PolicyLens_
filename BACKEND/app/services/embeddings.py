@@ -66,9 +66,17 @@ class EmbeddingService:
 
             preferred_models = [
                 settings.EMBEDDING_MODEL_NAME,
+                "sentence-transformers/all-MiniLM-L6-v2",
                 "BAAI/bge-m3",
-                "sentence-transformers/all-MiniLM-L6-v2"
             ]
+            # On CPU without CUDA, prefer fast MiniLM (~125 clauses/s) unless explicitly overridden
+            try:
+                import torch
+                if not torch.cuda.is_available() and settings.EMBEDDING_MODEL_NAME == "BAAI/bge-m3" and not os.getenv("FORCE_CPU_BGE_M3"):
+                    if cls._has_local_model_cache("sentence-transformers/all-MiniLM-L6-v2"):
+                        preferred_models = ["sentence-transformers/all-MiniLM-L6-v2", "BAAI/bge-m3"]
+            except Exception:
+                pass
             # Deduplicate preserving order
             seen = set()
             targets_to_check = []
@@ -90,19 +98,19 @@ class EmbeddingService:
                     import torch
 
                     num_cpus = os.cpu_count() or 4
-                    torch.set_num_threads(min(8, num_cpus))
+                    torch.set_num_threads(min(10, num_cpus))
 
                     model = SentenceTransformer(found_target, local_files_only=True)
                     if hasattr(model, "max_seq_length"):
-                        model.max_seq_length = 512
+                        model.max_seq_length = 384 if "minilm" in found_target.lower() else 512
 
                     cls._model = model
                     cls._model_name = found_target
 
-                    if hasattr(model, "get_sentence_embedding_dimension"):
-                        cls._vector_dim = model.get_sentence_embedding_dimension()
-                    elif hasattr(model, "get_embedding_dimension"):
+                    if hasattr(model, "get_embedding_dimension"):
                         cls._vector_dim = model.get_embedding_dimension()
+                    elif hasattr(model, "get_sentence_embedding_dimension"):
+                        cls._vector_dim = model.get_sentence_embedding_dimension()
                     else:
                         cls._vector_dim = 1024 if "bge-m3" in found_target else 384
 
@@ -155,7 +163,7 @@ class EmbeddingService:
     def encode_batch(
         cls,
         texts: List[str],
-        batch_size: int = 32,
+        batch_size: int = 64,
         on_batch_complete: Optional[Callable[[int, int, List[List[float]]], None]] = None
     ) -> List[List[float]]:
         """

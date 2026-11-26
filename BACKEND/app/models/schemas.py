@@ -32,6 +32,7 @@ class DocumentResponse(BaseModel):
     processing_progress: Optional[int] = 100
     error_message: Optional[str] = None
     has_explanation: bool = False
+    is_ready_for_chat: bool = False
 
 class DocumentStatusResponse(BaseModel):
     id: str
@@ -122,6 +123,7 @@ class PolicyExplanationSection(BaseModel):
     status: str = "found"  # "found" | "not_found" | "partial"
 
 class PolicyExplanationResponse(BaseModel):
+    pipeline_version: Optional[str] = "3.1"
     document_id: str
     filename: str
     total_pages: int

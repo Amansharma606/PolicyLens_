@@ -38,6 +38,7 @@ export const DocumentLibrary = () => {
   const [previewExplanation, setPreviewExplanation] = useState(null);
   const [selectedPage, setSelectedPage] = useState(1);
   const [expandedSections, setExpandedSections] = useState({});
+  const [showExactSources, setShowExactSources] = useState({});
   const [loadingPreview, setLoadingPreview] = useState(false);
 
   // Modal for delete confirmation
@@ -95,11 +96,49 @@ export const DocumentLibrary = () => {
     }));
   };
 
+  const toggleExactSource = (key) => {
+    setShowExactSources((prev) => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
+  const renderFindingWithPageBadges = (pointText) => {
+    if (!pointText) return null;
+    const cleanText = pointText.replace(/\*\*/g, '').replace(/\*/g, '').trim();
+    const pageMatch = cleanText.match(/^(.*?)\s*\((Pages?\s+[\d,\s&-]+)\)\.?$/i);
+    if (!pageMatch) return <span>{cleanText}</span>;
+    const body = pageMatch[1].trim();
+    const pageTokens = pageMatch[2].match(/\d+/g) || [];
+    return (
+      <span>
+        <span>{body.endsWith('.') ? body : `${body}.`}</span>
+        <span className="inline-flex flex-wrap items-center gap-1 ml-1.5 align-baseline">
+          {pageTokens.map((pg, idx) => (
+            <span
+              key={idx}
+              className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/70"
+            >
+              Page {pg}
+            </span>
+          ))}
+        </span>
+      </span>
+    );
+  };
+
   const renderStatusBadge = (doc) => {
     if (doc.status === 'completed' || doc.status === 'ready') {
       return (
         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
           Ready
+        </span>
+      );
+    }
+    if (doc.status === 'chat_ready') {
+      return (
+        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+          Ready to Chat
         </span>
       );
     }
@@ -139,7 +178,11 @@ export const DocumentLibrary = () => {
 
   const filteredDocs = documents.filter((doc) => {
     const matchesSearch = doc.filename.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || doc.status === statusFilter;
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'ready'
+        ? ['completed', 'chat_ready', 'ready'].includes(doc.status)
+        : doc.status === statusFilter);
     return matchesSearch && matchesStatus;
   });
 
@@ -479,33 +522,55 @@ export const DocumentLibrary = () => {
                           </button>
 
                           {isExpanded && (
-                            <div className="px-4 pb-4 pt-1 border-t border-slate-100 space-y-2 text-xs">
+                            <div className="px-4 pb-4 pt-2 border-t border-slate-100 space-y-2.5 text-xs">
                               {isFound ? (
                                 <>
                                   {sec.key_points && sec.key_points.length > 0 && (
-                                    <ul className="list-disc pl-5 space-y-1 text-slate-600 text-[11px] leading-relaxed">
+                                    <ul className="space-y-1.5 text-slate-700 text-xs leading-relaxed">
                                       {sec.key_points.map((pt, i) => (
-                                        <li key={i}>{pt}</li>
+                                        <li key={i} className="flex items-start gap-2">
+                                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1.5" />
+                                          <div className="flex-1">{renderFindingWithPageBadges(pt)}</div>
+                                        </li>
                                       ))}
                                     </ul>
                                   )}
                                   {sec.sources && sec.sources.length > 0 && (
-                                    <div className="space-y-1.5 pt-1">
-                                      {sec.sources.map((src, i) => (
-                                        <div key={i} className="p-2 rounded-xl bg-slate-50 border border-slate-200/80 font-mono text-[10px] text-slate-600">
-                                          <div className="flex items-center justify-between pb-0.5 text-[10px] text-blue-700 font-semibold font-sans">
-                                            <span>Page {src.page} • {src.section}</span>
-                                            <span className="uppercase text-[9px] px-1 rounded bg-blue-100/70">{src.category}</span>
-                                          </div>
-                                          "{src.text}"
+                                    <div className="pt-1.5 border-t border-slate-100">
+                                      <button
+                                        onClick={() => toggleExactSource(sec.key)}
+                                        className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-blue-600 transition-colors cursor-pointer"
+                                      >
+                                        <FileText className="w-3.5 h-3.5" />
+                                        <span>
+                                          {showExactSources[sec.key]
+                                            ? 'Hide exact policy text'
+                                            : `View exact policy text (${sec.sources.length})`}
+                                        </span>
+                                        {showExactSources[sec.key] ? (
+                                          <ChevronUp className="w-3.5 h-3.5" />
+                                        ) : (
+                                          <ChevronDown className="w-3.5 h-3.5" />
+                                        )}
+                                      </button>
+                                      {showExactSources[sec.key] && (
+                                        <div className="space-y-1.5 pt-2">
+                                          {sec.sources.map((src, i) => (
+                                            <div key={i} className="p-2 rounded-xl bg-slate-50 border border-slate-200/80 font-mono text-[10px] text-slate-600">
+                                              <div className="flex items-center justify-between pb-0.5 text-[10px] text-blue-700 font-semibold font-sans">
+                                                <span>Page {src.page} • {src.section}</span>
+                                              </div>
+                                              "{src.text}"
+                                            </div>
+                                          ))}
                                         </div>
-                                      ))}
+                                      )}
                                     </div>
                                   )}
                                 </>
                               ) : (
                                 <p className="text-slate-500 italic text-[11px] pt-1">
-                                  {sec.limitations || 'This dimension was not found in the uploaded policy text.'}
+                                  {sec.limitations || 'Not specified in this policy document.'}
                                 </p>
                               )}
                             </div>

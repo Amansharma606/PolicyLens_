@@ -2,8 +2,9 @@ import os
 import shutil
 import json
 import hashlib
+import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status, Response
 from sqlalchemy.orm import Session
@@ -21,12 +22,23 @@ from app.models.schemas import (
 from app.core.config import settings
 from app.core.security import get_current_user_optional
 from app.services.document_worker import DocumentWorker
+from app.services.explanation_service import PolicyExplanationService
+from app.services.bm25_retriever import get_bm25_index
 from app.core.logging import logger
 
 router = APIRouter()
+_expl_locks: Dict[str, threading.Lock] = {}
+_expl_locks_guard = threading.Lock()
+
+
+def _get_expl_lock(doc_id: str) -> threading.Lock:
+    with _expl_locks_guard:
+        if doc_id not in _expl_locks:
+            _expl_locks[doc_id] = threading.Lock()
+        return _expl_locks[doc_id]
 
 def _format_doc_response(d: Document) -> DocumentResponse:
-    is_ready = d.status in ["completed", "ready"]
+    is_ready = d.status in ["chat_ready", "completed", "ready"]
     return DocumentResponse(
         id=d.id,
         filename=d.filename,
@@ -36,9 +48,10 @@ def _format_doc_response(d: Document) -> DocumentResponse:
         upload_date=d.upload_date.isoformat() if d.upload_date else "",
         status=d.status,
         processing_stage=d.processing_stage or ("Completed" if is_ready else "Processing"),
-        processing_progress=d.processing_progress if d.processing_progress is not None else (100 if is_ready else 50),
+        processing_progress=d.processing_progress if d.processing_progress is not None else (100 if d.status in ["completed", "ready"] else 40),
         error_message=d.error_message,
-        has_explanation=bool(d.explanation_json)
+        has_explanation=bool(d.explanation_json),
+        is_ready_for_chat=is_ready
     )
 
 @router.get("/documents", response_model=List[DocumentResponse], tags=["Documents"])
@@ -109,21 +122,38 @@ def upload_document(
 
     file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-    # 5. Check for Duplicate Uploads
+    # 5. Check for Duplicate Uploads (instant return if already indexed; fast re-index otherwise)
     existing_doc = db.query(Document).filter(Document.file_hash == file_hash).first()
     if existing_doc:
-        if existing_doc.status in ["completed", "ready"]:
-            logger.info(f"Duplicate upload detected: Document {existing_doc.id} ({existing_doc.filename}) is already completed.")
+        clause_cnt = db.query(DocumentClause).filter(DocumentClause.document_id == existing_doc.id).count()
+        if existing_doc.status in ["completed", "ready", "chat_ready"] and clause_cnt > 0:
+            if existing_doc.status != "ready":
+                existing_doc.status = "ready"
+                existing_doc.processing_progress = 100
+                existing_doc.processing_stage = "Ready for instant Q&A"
+                db.commit()
+                db.refresh(existing_doc)
+            clauses_db = db.query(DocumentClause).filter(DocumentClause.document_id == existing_doc.id).all()
+            get_bm25_index(existing_doc.id, [{
+                "id": c.id,
+                "clean_text": c.clean_text,
+                "search_text": f"[Section: {c.section_name or ''}] [Clause: {c.clause_number or ''}] [Category: {c.category or ''}] {c.clean_text}",
+                "category": c.category,
+                "page": c.page_number,
+            } for c in clauses_db])
+            logger.info(f"Duplicate upload detected: Document {existing_doc.id} ({existing_doc.filename}) ready.")
             response.status_code = status.HTTP_200_OK
             return DocumentUploadResponse(
-                message="Policy document already uploaded and indexed.",
+                message="Policy document already uploaded and ready for instant Q&A.",
                 document=_format_doc_response(existing_doc)
             )
-        elif existing_doc.status == "processing":
-            logger.info(f"Duplicate upload detected: Document {existing_doc.id} is currently processing.")
-            response.status_code = status.HTTP_202_ACCEPTED
+        else:
+            logger.info(f"Re-indexing existing document {existing_doc.id} ({existing_doc.filename}) with fast pipeline.")
+            DocumentWorker.run_stage1_sync(db, existing_doc.id)
+            db.refresh(existing_doc)
+            response.status_code = status.HTTP_200_OK
             return DocumentUploadResponse(
-                message="Policy document is currently being processed.",
+                message="Policy extracted and ready for instant Q&A.",
                 document=_format_doc_response(existing_doc)
             )
 
@@ -143,7 +173,7 @@ def upload_document(
             detail="Failed to save uploaded file on server storage."
         )
 
-    # 7. Create Database Record in 'processing' status
+    # 7. Create Database Record and run fast single-stage extraction + BM25+TF-IDF indexing (< 1-3s)
     doc = Document(
         user_id=user_id,
         filename=clean_filename,
@@ -152,8 +182,8 @@ def upload_document(
         total_pages=0,
         total_words=0,
         status="processing",
-        processing_stage="Queued for AI extraction",
-        processing_progress=5,
+        processing_stage="Extracting text & building instant search index...",
+        processing_progress=10,
         file_hash=file_hash,
         error_message=None
     )
@@ -161,15 +191,12 @@ def upload_document(
     db.commit()
     db.refresh(doc)
 
-    logger.info(f"Document {doc.id} registered for file '{clean_filename}'. Launching background worker...")
+    DocumentWorker.run_stage1_sync(db, doc.id)
+    db.refresh(doc)
 
-    # 8. Launch Asynchronous Worker
-    DocumentWorker.start_processing(doc.id)
-
-    # 9. Return HTTP 202 Accepted immediately with real document ID
-    response.status_code = status.HTTP_202_ACCEPTED
+    response.status_code = status.HTTP_200_OK
     return DocumentUploadResponse(
-        message="Policy document uploaded successfully. Background processing started.",
+        message="Policy parsed and ready for instant Q&A.",
         document=_format_doc_response(doc)
     )
 
@@ -177,20 +204,19 @@ def upload_document(
 def get_document_status(document_id: str, db: Session = Depends(get_db)):
     """
     Persistent Document Processing Status Polling API.
-    Returns real-time processing progress, current stage, and chat readiness.
     """
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail=f"Policy document '{document_id}' not found.")
 
     clause_count = db.query(DocumentClause).filter(DocumentClause.document_id == document_id).count()
-    is_ready = doc.status in ["completed", "ready"]
+    is_ready = doc.status in ["chat_ready", "completed", "ready"]
 
     return DocumentStatusResponse(
         id=doc.id,
         filename=doc.filename,
         status=doc.status,
-        processing_stage=doc.processing_stage or ("Completed" if is_ready else "Processing"),
+        processing_stage=doc.processing_stage or ("Ready for instant Q&A" if is_ready else "Processing"),
         processing_progress=doc.processing_progress if doc.processing_progress is not None else (100 if is_ready else 50),
         total_pages=doc.total_pages or 0,
         total_words=doc.total_words or 0,
@@ -232,16 +258,20 @@ def get_document_explanation(document_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Policy document not found.")
 
-    if not doc.explanation_json:
-        if doc.status == "processing":
+    has_v31 = bool(doc.explanation_json and '"pipeline_version": "3.1"' in doc.explanation_json)
+    if not has_v31:
+        if doc.status not in ("ready", "completed", "chat_ready"):
             raise HTTPException(
-                status_code=status.HTTP_202_ACCEPTED,
-                detail="Policy explanation is currently being synthesized."
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Document text extraction must complete before generating structured explanation."
             )
-        raise HTTPException(
-            status_code=404,
-            detail="Policy explanation not yet available for this document."
-        )
+        lock = _get_expl_lock(document_id)
+        with lock:
+            db.refresh(doc)
+            if not (doc.explanation_json and '"pipeline_version": "3.1"' in doc.explanation_json):
+                logger.info(f"Lazily generating 10-dimension explanation in single batch for {doc.id}...")
+                explanation_data = PolicyExplanationService.generate_explanation(db, doc)
+                return PolicyExplanationResponse(**explanation_data)
 
     try:
         explanation_data = json.loads(doc.explanation_json)

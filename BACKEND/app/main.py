@@ -5,7 +5,7 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.db.database import init_db
 from app.api import health, auth, documents, chat
-from app.services.embeddings import EmbeddingService
+from app.services.llm_service import LLMService
 
 # Initialize Database Schema & Seed default accounts
 init_db()
@@ -18,16 +18,24 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+
 @app.on_event("startup")
 def startup_event():
-    # Pre-warm embedding service so uploads and QA are instant
-    try:
-        EmbeddingService.initialize()
-        logger.info(f"PolicyLens ready: Embedding engine initialized with {EmbeddingService.get_model_name()}.")
-    except Exception as e:
-        logger.warning(f"Embedding pre-warming notification: {e}")
+    """
+    Fast startup (<0.3s): warm configured LLM backend asynchronously without blocking on PyTorch.
+    """
+    import threading
 
-# Configure Cross-Origin Resource Sharing (CORS)
+    def _warm_llm():
+        try:
+            LLMService.warmup()
+        except Exception as le:
+            logger.debug(f"LLM warmup note: {le}")
+
+    threading.Thread(target=_warm_llm, daemon=True, name="LLMWarmup").start()
+    logger.info("PolicyLens backend online (instant BM25+TF-IDF indexing + streaming QA).")
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,7 +44,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global Exception Handler
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
@@ -45,11 +53,12 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "An internal server error occurred while processing the insurance policy request."}
     )
 
-# Include API Routers
+
 app.include_router(health.router, prefix=settings.API_PREFIX)
 app.include_router(auth.router, prefix=settings.API_PREFIX)
 app.include_router(documents.router, prefix=settings.API_PREFIX)
 app.include_router(chat.router, prefix=settings.API_PREFIX)
+
 
 @app.get("/")
 def root():
@@ -60,6 +69,7 @@ def root():
         "docs": "/docs",
         "api_health": f"{settings.API_PREFIX}/health"
     }
+
 
 if __name__ == "__main__":
     import uvicorn
